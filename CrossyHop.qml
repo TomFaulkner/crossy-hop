@@ -98,6 +98,7 @@ Item {
   function spawnCar(lane) {
     var row = lane === 1 ? roadRow1 : roadRow2
     var dir = lane === 1 ? 1 : -1
+    // Official Kenney preview sprites (bake from GLB is WIP — see tools/bake_sprites.py).
     var img = lane === 1 ? "assets/kenney/previews/sedan.png" : "assets/kenney/previews/race.png"
     var t = dir === 1 ? -1 : cols + 2
     var speed = 1.2 + Math.random() * 1.0
@@ -106,11 +107,12 @@ Item {
       t: t,
       row: row,
       w: 56,
-      h: 32,
+      h: 40,
       dir: dir,
       speed: speed,
       image: img,
-      lane: lane
+      lane: lane,
+      mirror: false
     }
     cars.push(car)
   }
@@ -297,9 +299,10 @@ Item {
             anchors.fill: parent
             source: Qt.resolvedUrl(car.image)
             smooth: false
+            fillMode: Image.PreserveAspectFit
             transform: Scale {
-              origin.x: car.w / 2
-              origin.y: car.h / 2
+              origin.x: width / 2
+              origin.y: height / 2
               xScale: car.dir < 0 ? -1 : 1
               yScale: 1
             }
