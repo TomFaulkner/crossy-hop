@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "id": "io.github.tomfaulkner.crossy-hop",
+  "name": "Crossy Hop",
+  "version": "1.0.0",
+  "author": "Tom",
+  "license": "MIT",
+  "description": "A tiny isometric Crossy Road-ish overlay demo for omarchy-shell.",
+  "kinds": ["bar-widget", "overlay"],
+  "keepLoaded": true,
+  "entryPoints": {
+    "barWidget": "BarWidget.qml",
+    "overlay": "CrossyHop.qml"
+  },
+  "barWidget": {
+    "displayName": "Crossy Hop",
+    "description": "Open the Crossy Hop overlay demo",
+    "category": "Fun",
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}
