@@ -87,7 +87,7 @@ Item {
   }
 
   function nudgeAngle(delta) {
-    isoAngleDeg = Math.round((Math.max(8, Math.min(40, isoAngleDeg + delta))) * 10) / 10
+    isoAngleDeg = Math.round((Math.max(8, Math.min(50, isoAngleDeg + delta))) * 10) / 10
     playfield.requestPaint()
   }
 
