@@ -6,6 +6,7 @@ Invoked as:
 
 Companion to tools/bake_blender.py (Kenney GLB path). Same ortho/dimetric camera
 feel: elev 30°, view azim 45°, transparent film, SE + NW car facings, NE chick.
+Default yaws (car E=75, W=255, chick NE=195, SW=15) match road/hop at ANGLE 40°.
 
 OBJ sources live under assets/bacon/{chicken,orange_car,blue_car,green_car}/
 with local .mtl binding map_Kd to 0.png (real files — never symlinks).
@@ -53,13 +54,15 @@ def parse_args(argv: list[str] | None = None):
     ap.add_argument("--samples", type=int, default=64)
     ap.add_argument("--sweep", action="store_true", help="Yaw sweep contact only (no final bake)")
     ap.add_argument("--no-downscale", action="store_true")
-    # MagicaVoxel cars are long on Z; after OBJ Y-up→Blender Z-up, length ≈ ±Y.
-    # Default facing often nose toward -Y (like Kenney after glTF). SW preview ≈ 0.
-    ap.add_argument("--base-yaw", type=float, default=0.0, help="Yaw matching SW / base facing")
-    ap.add_argument("--car-e-yaw", type=float, default=None)
-    ap.add_argument("--car-w-yaw", type=float, default=None)
-    ap.add_argument("--chick-ne-yaw", type=float, default=None)
-    ap.add_argument("--chick-sw-yaw", type=float, default=None)
+    # MagicaVoxel cars are long on Z; after OBJ Y-up→Blender Z-up, length ≈ ±Y,
+    # nose toward Blender -Y. Tuned so projected nose matches road at ANGLE 40°
+    # (SE ≈ screen +40°, NW ≈ -140°) under elev 30° / view-azim 45° bake camera.
+    # Chick beak also -Y; NE hop ≈ screen -40°.
+    ap.add_argument("--base-yaw", type=float, default=0.0, help="Legacy offset; prefer explicit --*-yaw")
+    ap.add_argument("--car-e-yaw", type=float, default=75.0, help="SE traffic (dir=+1), nose down-right")
+    ap.add_argument("--car-w-yaw", type=float, default=255.0, help="NW traffic (dir=-1), nose up-left")
+    ap.add_argument("--chick-ne-yaw", type=float, default=195.0, help="Hop-forward NE (up-right)")
+    ap.add_argument("--chick-sw-yaw", type=float, default=15.0, help="Opposite SW facing")
     return ap.parse_args(argv)
 
 
@@ -453,10 +456,11 @@ def main():
     CONTACT.parent.mkdir(parents=True, exist_ok=True)
 
     base = args.base_yaw
-    car_e = args.car_e_yaw if args.car_e_yaw is not None else (base + 90.0)
-    car_w = args.car_w_yaw if args.car_w_yaw is not None else (base + 270.0)
-    chick_ne = args.chick_ne_yaw if args.chick_ne_yaw is not None else (base + 180.0)
-    chick_sw = args.chick_sw_yaw if args.chick_sw_yaw is not None else base
+    # Explicit defaults (75/255/195/15) align to ANGLE 40° road/hop; base only shifts if non-zero.
+    car_e = args.car_e_yaw + base
+    car_w = args.car_w_yaw + base
+    chick_ne = args.chick_ne_yaw + base
+    chick_sw = args.chick_sw_yaw + base
 
     down_h = None if args.no_downscale else args.out_height
 
