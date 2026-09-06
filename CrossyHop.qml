@@ -11,13 +11,14 @@ Item {
   property bool opened: false
   property bool muted: false
 
-  // Grid / iso constants
+  // Grid / iso constants — softened toward Crossy Road (~21.6° from horizontal)
+  // atan(tileH/tileW) = atan(38/96) ≈ 21.6° (gentler than classic 2:1 iso ≈ 26.6°)
   readonly property int cols: 9
   readonly property int rows: 7
-  readonly property int tileW: 80
-  readonly property int tileH: 40
-  readonly property int playW: 720
-  readonly property int playH: 520
+  readonly property int tileW: 96
+  readonly property int tileH: 38
+  readonly property int playW: 900
+  readonly property int playH: 480
   readonly property int roadRow1: 3
   readonly property int roadRow2: 4
 
@@ -84,7 +85,7 @@ Item {
   }
 
   function isoY(col, row) {
-    return (col + row) * tileH / 2 + 40
+    return (col + row) * tileH / 2 + 36
   }
 
   function centerX(col, row) {
@@ -108,8 +109,8 @@ Item {
     var car = {
       t: t,
       row: row,
-      w: 72,
-      h: 52,
+      w: 110,
+      h: 68,
       dir: dir,
       speed: speed,
       image: img,
@@ -246,33 +247,69 @@ Item {
           ctx.restore()
         }
 
+        // Continuous Crossy-style parallelogram (hex union) for one road lane row.
+        function drawRoadBand(ctx, row, fill) {
+          var leftC = [root.centerX(1, row), root.centerY(1, row)]
+          var rightC = [root.centerX(cols, row), root.centerY(cols, row)]
+          ctx.save()
+          ctx.beginPath()
+          ctx.moveTo(leftC[0] - tileW / 2, leftC[1])
+          ctx.lineTo(leftC[0], leftC[1] - tileH / 2)
+          ctx.lineTo(rightC[0], rightC[1] - tileH / 2)
+          ctx.lineTo(rightC[0] + tileW / 2, rightC[1])
+          ctx.lineTo(rightC[0], rightC[1] + tileH / 2)
+          ctx.lineTo(leftC[0], leftC[1] + tileH / 2)
+          ctx.closePath()
+          ctx.fillStyle = fill
+          ctx.fill()
+          ctx.restore()
+        }
+
         onPaint: {
           var ctx = getContext("2d")
           ctx.reset()
           ctx.imageSmoothingEnabled = false
 
-          // Sky already filled by Rectangle; draw iso tiles
+          var stroke = Qt.rgba(root.ink.r, root.ink.g, root.ink.b, 0.12)
+
+          // Grass diamonds (skip road rows — those are continuous bands)
           for (var r = 1; r <= rows; r++) {
+            if (r === roadRow1 || r === roadRow2)
+              continue
             for (var c = 1; c <= cols; c++) {
               var cx = root.isoX(c, r) + tileW / 2
               var cy = root.isoY(c, r) + tileH / 2
-              var isRoad = (r === roadRow1 || r === roadRow2)
-              var fill = isRoad ? road : grass
-              var stroke = Qt.rgba(root.ink.r, root.ink.g, root.ink.b, 0.12)
-              drawDiamond(ctx, cx, cy, tileW, tileH, fill, stroke)
+              drawDiamond(ctx, cx, cy, tileW, tileH, grass, stroke)
             }
           }
 
-          // Road center line between lanes
+          // Two-lane road as continuous parallelogram strips (Crossy-like)
+          drawRoadBand(ctx, roadRow1, road)
+          drawRoadBand(ctx, roadRow2, road)
+
+          // Subtle seam between the two road rows
+          ctx.save()
+          ctx.strokeStyle = Qt.rgba(root.ink.r, root.ink.g, root.ink.b, 0.18)
+          ctx.lineWidth = 1
+          ctx.beginPath()
+          var seamRow = (roadRow1 + roadRow2) / 2
+          ctx.moveTo(root.centerX(0.2, seamRow), root.centerY(0.2, seamRow))
+          ctx.lineTo(root.centerX(cols + 0.8, seamRow), root.centerY(cols + 0.8, seamRow))
+          ctx.stroke()
+          ctx.restore()
+
+          // Road center dashed line along the isometric road diagonal
+          // (between roadRow1 / roadRow2, left → right of the lane strip)
           ctx.save()
           ctx.strokeStyle = roadMark
           ctx.lineWidth = 2
-          ctx.setLineDash([12, 12])
+          ctx.setLineDash([14, 12])
           ctx.beginPath()
-          var yline = (root.centerY(1, roadRow1) + root.centerY(1, roadRow2)) / 2
-          ctx.moveTo(0, yline)
-          ctx.lineTo(playW, yline)
+          var midRow = (roadRow1 + roadRow2) / 2
+          ctx.moveTo(root.centerX(0.0, midRow), root.centerY(0.0, midRow))
+          ctx.lineTo(root.centerX(cols + 1.0, midRow), root.centerY(cols + 1.0, midRow))
           ctx.stroke()
+          ctx.setLineDash([])
           ctx.restore()
 
           // Instructions
@@ -308,10 +345,10 @@ Item {
 
       Image {
         id: chick
-        x: root.centerX(chickCol, chickRow) - 32
-        y: root.centerY(chickCol, chickRow) - 48 - hopZ
-        width: 64
-        height: 64
+        x: root.centerX(chickCol, chickRow) - 36
+        y: root.centerY(chickCol, chickRow) - 52 - hopZ
+        width: 72
+        height: 72
         source: Qt.resolvedUrl("assets/baked/chick-ne.png")
         smooth: false
         z: 4
