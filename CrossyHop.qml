@@ -11,13 +11,13 @@ Item {
   property bool opened: false
   property bool muted: false
 
-  // Grid / iso — clearly flatter than classic 2:1 (~27°). atan(32/112) ≈ 15.9°.
+  // Grid / iso — Crossy-like ~22.6° (atan(40/96)). Was 16° (too flat) / 27° (too steep).
   readonly property int cols: 9
   readonly property int rows: 7
-  readonly property int tileW: 112
-  readonly property int tileH: 32
-  readonly property int playW: 980
-  readonly property int playH: 460
+  readonly property int tileW: 96
+  readonly property int tileH: 40
+  readonly property int playW: 900
+  readonly property int playH: 480
   readonly property int roadRow1: 3
   readonly property int roadRow2: 4
 
