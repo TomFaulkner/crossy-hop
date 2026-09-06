@@ -11,15 +11,20 @@ Item {
   property bool opened: false
   property bool muted: false
 
-  // Grid / iso — Crossy-like ~22.6° (atan(40/96)). Was 16° (too flat) / 27° (too steep).
+  // Grid / iso — live angle (degrees from horizontal). tileH = tileW * tan(angle).
   readonly property int cols: 9
   readonly property int rows: 7
-  readonly property int tileW: 96
-  readonly property int tileH: 40
+  property real isoAngleDeg: 22.6
+  property real tileW: 96
+  property real tileH: tileW * Math.tan(isoAngleDeg * Math.PI / 180)
   readonly property int playW: 900
   readonly property int playH: 480
   readonly property int roadRow1: 3
   readonly property int roadRow2: 4
+  // Floating panel size (not fullscreen). [ and ] nudge angle; - and = nudge size.
+  property real viewScale: 0.62
+  property int winW: Math.round(playW * viewScale + 32)
+  property int winH: Math.round(playH * viewScale + 56)
 
   // Theme colors
   readonly property color ink: Color.foreground || "#d8dee9"
@@ -77,6 +82,19 @@ Item {
 
   function toggleMute() {
     muted = !muted
+  }
+
+  function nudgeAngle(delta) {
+    isoAngleDeg = Math.round((Math.max(8, Math.min(40, isoAngleDeg + delta))) * 10) / 10
+    playfield.requestPaint()
+  }
+
+  function nudgeView(delta) {
+    viewScale = Math.round((Math.max(0.35, Math.min(0.95, viewScale + delta))) * 100) / 100
+  }
+
+  function angleLabel() {
+    return isoAngleDeg.toFixed(1) + "°"
   }
 
   function isoX(col, row) {
@@ -193,17 +211,13 @@ Item {
   PanelWindow {
     id: panel
     visible: root.opened
+    // Fullscreen layer, fully clear — only the scaled game card occludes the desktop.
     anchors { top: true; right: true; bottom: true; left: true }
     color: "transparent"
     exclusionMode: ExclusionMode.Ignore
     WlrLayershell.namespace: "crossy-hop"
     WlrLayershell.layer: WlrLayer.Overlay
     WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive
-
-    Rectangle {
-      anchors.fill: parent
-      color: Qt.rgba(night.r, night.g, night.b, 0.72)
-    }
 
     MouseArea {
       anchors.fill: parent
@@ -215,7 +229,15 @@ Item {
       width: playW
       height: playH
       anchors.centerIn: parent
-      scale: Math.min((panel.width - 32) / width, (panel.height - 32) / height)
+      // User-tunable size; default leaves plenty of desktop visible around the card.
+      scale: root.viewScale
+
+      // Block dismiss when interacting with the game card.
+      MouseArea {
+        anchors.fill: parent
+        acceptedButtons: Qt.AllButtons
+        onClicked: keyCatcher.forceActiveFocus()
+      }
 
       Rectangle {
         anchors.fill: parent
@@ -312,13 +334,25 @@ Item {
           ctx.setLineDash([])
           ctx.restore()
 
+          // Live angle HUD (match against Crossy Road)
+          ctx.save()
+          ctx.font = "bold 22px monospace"
+          ctx.textAlign = "left"
+          ctx.textBaseline = "top"
+          ctx.fillStyle = accent
+          ctx.fillText("ANGLE  " + root.angleLabel(), 16, 14)
+          ctx.font = "12px monospace"
+          ctx.fillStyle = ink
+          ctx.fillText("[ ]  angle ±0.5°     - =  window size     ESC  close", 16, 42)
+          ctx.restore()
+
           // Instructions
           ctx.save()
           ctx.font = "bold 14px monospace"
           ctx.textAlign = "center"
           ctx.textBaseline = "middle"
           ctx.fillStyle = ink
-          ctx.fillText("ARROWS / WASD  HOP    ESC  CLOSE    M  MUTE", playW / 2, playH - 18)
+          ctx.fillText("ARROWS / WASD  HOP    M  MUTE", playW / 2, playH - 18)
           ctx.restore()
         }
       }
@@ -383,6 +417,10 @@ Item {
         Keys.onPressed: function(event) {
           if (event.key === Qt.Key_Escape) root.dismiss()
           else if (event.key === Qt.Key_M) root.toggleMute()
+          else if (event.key === Qt.Key_BracketLeft) root.nudgeAngle(-0.5)
+          else if (event.key === Qt.Key_BracketRight) root.nudgeAngle(0.5)
+          else if (event.key === Qt.Key_Minus || event.key === Qt.Key_Underscore) root.nudgeView(-0.05)
+          else if (event.key === Qt.Key_Equal || event.key === Qt.Key_Plus) root.nudgeView(0.05)
           else if (event.key === Qt.Key_Left || event.key === Qt.Key_A) root.moveChick(-1, 0)
           else if (event.key === Qt.Key_Right || event.key === Qt.Key_D) root.moveChick(1, 0)
           else if (event.key === Qt.Key_Up || event.key === Qt.Key_W) root.moveChick(0, -1)

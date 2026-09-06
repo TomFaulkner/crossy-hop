@@ -30,6 +30,8 @@ After QML edits: `omarchy restart shell`.
 ## Controls
 
 - Arrow keys or `W`/`A`/`S`/`D`: hop one tile
+- `[` / `]`: nudge road angle ±0.5° (HUD shows current degrees)
+- `-` / `=`: shrink / grow the game window (desktop stays visible around it)
 - `M`: mute toggle (reserved; no SFX yet)
 - `Esc`: close
 
