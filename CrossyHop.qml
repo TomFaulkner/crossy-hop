@@ -110,8 +110,8 @@ Item {
     return viewRotationDeg.toFixed(1) + "°"
   }
 
-  // Local iso offset, then apply viewRotationDeg so ROT fills the upright card
-  // (no Item.rotation — that clipped the grass and left cars on empty sky).
+  // Iso cell centers in local space, then ROT around the grid centroid and
+  // uniform fit so the whole board stays inside the upright play card.
   function isoLocal(col, row) {
     return {
       x: (col - row) * tileW / 2,
@@ -119,27 +119,57 @@ Item {
     }
   }
 
-  function isoX(col, row) {
-    var p = isoLocal(col, row)
-    var r = viewRotationDeg * Math.PI / 180
-    var c = Math.cos(r), s = Math.sin(r)
-    return p.x * c - p.y * s + playW / 2
+  function gridCentroidLocal() {
+    return isoLocal((1 + cols) / 2, (1 + rows) / 2)
   }
 
-  function isoY(col, row) {
-    var p = isoLocal(col, row)
+  // Screen-space transform for a local iso point (rotate about centroid, fit, center).
+  function projectLocal(lx, ly) {
+    var mid = gridCentroidLocal()
+    var x = lx - mid.x
+    var y = ly - mid.y
     var r = viewRotationDeg * Math.PI / 180
     var c = Math.cos(r), s = Math.sin(r)
-    return p.x * s + p.y * c + playH / 2 - (rows * tileH) / 4
+    var xr = x * c - y * s
+    var yr = x * s + y * c
+
+    // AABB of all cell centers after rotation → fit inside play area with padding.
+    var minX = 1e9, maxX = -1e9, minY = 1e9, maxY = -1e9
+    for (var row = 1; row <= rows; row++) {
+      for (var col = 1; col <= cols; col++) {
+        var p = isoLocal(col, row)
+        var px = (p.x - mid.x) * c - (p.y - mid.y) * s
+        var py = (p.x - mid.x) * s + (p.y - mid.y) * c
+        if (px < minX) minX = px
+        if (px > maxX) maxX = px
+        if (py < minY) minY = py
+        if (py > maxY) maxY = py
+      }
+    }
+    // Include diamond half-extents so tiles aren't clipped at edges.
+    var pad = Math.max(tileW, tileH) * 0.75
+    var bw = (maxX - minX) + pad * 2
+    var bh = (maxY - minY) + pad * 2
+    var fit = Math.min((playW * 0.92) / bw, (playH * 0.88) / bh)
+    return {
+      x: xr * fit + playW / 2,
+      y: yr * fit + playH / 2
+    }
   }
 
   function centerX(col, row) {
-    return isoX(col, row) + tileW / 2
+    var p = isoLocal(col, row)
+    return projectLocal(p.x, p.y).x
   }
 
   function centerY(col, row) {
-    return isoY(col, row) + tileH / 2
+    var p = isoLocal(col, row)
+    return projectLocal(p.x, p.y).y
   }
+
+  // Kept for any leftover callers; same as cell center (diamonds draw from center).
+  function isoX(col, row) { return centerX(col, row) }
+  function isoY(col, row) { return centerY(col, row) }
 
   function spawnCar(lane) {
     var row = lane === 1 ? roadRow1 : roadRow2
@@ -257,6 +287,7 @@ Item {
       anchors.centerIn: parent
       scale: root.viewScale
       transformOrigin: Item.Center
+      clip: true
 
       // Block dismiss when interacting with the game card.
       MouseArea {
@@ -297,18 +328,27 @@ Item {
           ctx.restore()
         }
 
-        // Continuous Crossy-style parallelogram (hex union) for one road lane row.
+        // Road band as a thick strip along the lane row (uses projected cell centers).
         function drawRoadBand(ctx, row, fill) {
           var leftC = [root.centerX(1, row), root.centerY(1, row)]
           var rightC = [root.centerX(cols, row), root.centerY(cols, row)]
+          var dx = rightC[0] - leftC[0]
+          var dy = rightC[1] - leftC[1]
+          var len = Math.sqrt(dx * dx + dy * dy) || 1
+          var nx = -dy / len
+          var ny = dx / len
+          var half = Math.max(18, Math.min(tileH, tileW) * 0.28)
+          var extend = half * 1.2
+          var x0 = leftC[0] - (dx / len) * extend
+          var y0 = leftC[1] - (dy / len) * extend
+          var x1 = rightC[0] + (dx / len) * extend
+          var y1 = rightC[1] + (dy / len) * extend
           ctx.save()
           ctx.beginPath()
-          ctx.moveTo(leftC[0] - tileW / 2, leftC[1])
-          ctx.lineTo(leftC[0], leftC[1] - tileH / 2)
-          ctx.lineTo(rightC[0], rightC[1] - tileH / 2)
-          ctx.lineTo(rightC[0] + tileW / 2, rightC[1])
-          ctx.lineTo(rightC[0], rightC[1] + tileH / 2)
-          ctx.lineTo(leftC[0], leftC[1] + tileH / 2)
+          ctx.moveTo(x0 + nx * half, y0 + ny * half)
+          ctx.lineTo(x1 + nx * half, y1 + ny * half)
+          ctx.lineTo(x1 - nx * half, y1 - ny * half)
+          ctx.lineTo(x0 - nx * half, y0 - ny * half)
           ctx.closePath()
           ctx.fillStyle = fill
           ctx.fill()
@@ -331,9 +371,10 @@ Item {
             if (r === roadRow1 || r === roadRow2)
               continue
             for (var c = 1; c <= cols; c++) {
-              var cx = root.isoX(c, r) + tileW / 2
-              var cy = root.isoY(c, r) + tileH / 2
-              drawDiamond(ctx, cx, cy, tileW, tileH, grass, stroke)
+              var cx = root.centerX(c, r)
+              var cy = root.centerY(c, r)
+              // Diamond size scales with fit roughly via tileW/H; keep readable.
+              drawDiamond(ctx, cx, cy, tileW * 0.55, tileH * 0.55, grass, stroke)
             }
           }
 
