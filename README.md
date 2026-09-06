@@ -30,6 +30,8 @@ After QML edits: `omarchy restart shell`.
 ## Controls
 
 - Arrow keys or `W`/`A`/`S`/`D`: hop one tile
+Defaults (Crossy-like dimetric, not true isometric): **ANGLE 40°**, **ROT −20°**. Fine-tune window ~38–42° / −18–−22°.
+
 - `[` / `]`: nudge road **angle** (steepness) ±0.5° — HUD `ANGLE`
 - `;` / `'`: nudge whole-scene **rotation** ±1° — HUD `ROT`
 - `-` / `=`: shrink / grow the game window (desktop stays visible around it)

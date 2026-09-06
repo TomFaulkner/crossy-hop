@@ -11,10 +11,10 @@ Item {
   property bool opened: false
   property bool muted: false
 
-  // Grid / iso — live angle (deg from horizontal). Default matched to Crossy Road: 30.6° / rot -20°.
+  // Grid / iso — Crossy dimetric defaults (not true iso 35.3/45): pitch 40°, yaw -20°.
   readonly property int cols: 9
   readonly property int rows: 7
-  property real isoAngleDeg: 30.6
+  property real isoAngleDeg: 40
   property real tileW: 96
   property real tileH: tileW * Math.tan(isoAngleDeg * Math.PI / 180)
   readonly property int playW: 900
