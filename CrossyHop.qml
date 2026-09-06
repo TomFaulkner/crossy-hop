@@ -21,8 +21,10 @@ Item {
   readonly property int playH: 480
   readonly property int roadRow1: 3
   readonly property int roadRow2: 4
-  // Floating panel size (not fullscreen). [ and ] nudge angle; - and = nudge size.
+  // View chrome: scale = window size; rotation = whole-scene twist (screen degrees).
+  // [ ] angle (road steepness)   ; ' rotation   - = size
   property real viewScale: 0.62
+  property real viewRotationDeg: 0
   property int winW: Math.round(playW * viewScale + 32)
   property int winH: Math.round(playH * viewScale + 56)
 
@@ -93,8 +95,16 @@ Item {
     viewScale = Math.round((Math.max(0.35, Math.min(0.95, viewScale + delta))) * 100) / 100
   }
 
+  function nudgeRotation(delta) {
+    viewRotationDeg = Math.round((Math.max(-45, Math.min(45, viewRotationDeg + delta))) * 10) / 10
+  }
+
   function angleLabel() {
     return isoAngleDeg.toFixed(1) + "°"
+  }
+
+  function rotationLabel() {
+    return viewRotationDeg.toFixed(1) + "°"
   }
 
   function isoX(col, row) {
@@ -229,8 +239,10 @@ Item {
       width: playW
       height: playH
       anchors.centerIn: parent
-      // User-tunable size; default leaves plenty of desktop visible around the card.
+      // User-tunable size + whole-scene rotation for matching Crossy Road.
       scale: root.viewScale
+      rotation: root.viewRotationDeg
+      transformOrigin: Item.Center
 
       // Block dismiss when interacting with the game card.
       MouseArea {
@@ -334,16 +346,17 @@ Item {
           ctx.setLineDash([])
           ctx.restore()
 
-          // Live angle HUD (match against Crossy Road)
+          // Live angle + rotation HUD (match against Crossy Road)
           ctx.save()
           ctx.font = "bold 22px monospace"
           ctx.textAlign = "left"
           ctx.textBaseline = "top"
           ctx.fillStyle = accent
           ctx.fillText("ANGLE  " + root.angleLabel(), 16, 14)
+          ctx.fillText("ROT    " + root.rotationLabel(), 16, 42)
           ctx.font = "12px monospace"
           ctx.fillStyle = ink
-          ctx.fillText("[ ]  angle ±0.5°     - =  window size     ESC  close", 16, 42)
+          ctx.fillText("[ ] angle ±0.5°   ; ' rot ±1°   - = size   ESC close", 16, 72)
           ctx.restore()
 
           // Instructions
@@ -419,6 +432,8 @@ Item {
           else if (event.key === Qt.Key_M) root.toggleMute()
           else if (event.key === Qt.Key_BracketLeft) root.nudgeAngle(-0.5)
           else if (event.key === Qt.Key_BracketRight) root.nudgeAngle(0.5)
+          else if (event.key === Qt.Key_Semicolon) root.nudgeRotation(-1)
+          else if (event.key === Qt.Key_Apostrophe) root.nudgeRotation(1)
           else if (event.key === Qt.Key_Minus || event.key === Qt.Key_Underscore) root.nudgeView(-0.05)
           else if (event.key === Qt.Key_Equal || event.key === Qt.Key_Plus) root.nudgeView(0.05)
           else if (event.key === Qt.Key_Left || event.key === Qt.Key_A) root.moveChick(-1, 0)
