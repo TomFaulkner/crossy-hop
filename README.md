@@ -44,7 +44,7 @@ After QML edits: `omarchy restart shell`.
 - **Preview fallbacks:** `assets/sprites/*` — Kenney official preview PNGs (optional stand-ins).
 - **Source GLBs:** `assets/kenney/*.glb` (car bodies already include wheel meshes;
   `wheel-default.glb` is also there for a future spin pass). The glTF importer expects
-  `assets/kenney/Textures/colormap.png` (symlink to `../colormap.png`).
+  `assets/kenney/Textures/colormap.png` is created as a **real copy** at bake time (gitignored; Omarchy forbids symlinks in plugins).
 - **Re-bake (Blender, preferred):**
 
 ```sh

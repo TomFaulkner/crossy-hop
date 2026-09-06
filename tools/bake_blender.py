@@ -6,7 +6,7 @@ Invoked as:
 
 World +Y (glTF) / +Z (Blender after import) stays up — orthographic camera with
 yaw-only object rotation so verticals remain screen-vertical. Cars already
-include wheels; we never reparent. Texture path: assets/kenney/Textures/ → colormap.
+include wheels; we never reparent. Texture path: bake copies colormap into assets/kenney/Textures/ (no symlinks).
 """
 from __future__ import annotations
 
@@ -71,17 +71,22 @@ def clear_scene():
     bpy.ops.wm.read_factory_settings(use_empty=True)
 
 
-def ensure_colormap_link():
+def ensure_colormap_for_gltf():
+    """glTF looks for Textures/colormap.png. Copy (never symlink — Omarchy forbids
+    symlinks inside plugin folders). Textures/ is gitignored."""
+    import shutil
     tex_dir = ASSETS / "Textures"
     tex_dir.mkdir(parents=True, exist_ok=True)
-    link = tex_dir / "colormap.png"
+    dest = tex_dir / "colormap.png"
     target = ASSETS / "colormap.png"
-    if target.exists() and not link.exists():
-        link.symlink_to(Path("..") / "colormap.png")
+    if target.exists() and (not dest.exists() or dest.is_symlink() or dest.stat().st_mtime < target.stat().st_mtime):
+        if dest.is_symlink() or dest.exists():
+            dest.unlink()
+        shutil.copy2(target, dest)
 
 
 def import_glb(path: Path):
-    ensure_colormap_link()
+    ensure_colormap_for_gltf()
     before = set(bpy.data.objects)
     bpy.ops.import_scene.gltf(filepath=str(path))
     imported = [o for o in bpy.data.objects if o not in before]

@@ -3,3 +3,6 @@
 *.jsc
 __pycache__/
 *.pyc
+
+# Local Blender glTF texture resolve (copied at bake time; never commit)
+assets/kenney/Textures/
