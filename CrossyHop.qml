@@ -21,7 +21,7 @@ Item {
   readonly property int playH: 480
   readonly property int roadRow1: 3
   readonly property int roadRow2: 4
-  // View chrome: scale = window size; rotation = whole-scene twist (screen degrees).
+  // View chrome: scale = window size; rotation twists the world only (card stays axis-aligned).
   // [ ] angle (road steepness)   ; ' rotation   - = size
   property real viewScale: 0.62
   property real viewRotationDeg: -26
@@ -158,13 +158,10 @@ Item {
   }
 
   function moveChick(dx, dy) {
-    // Map input to iso grid movement
-    var dc = 0, dr = 0
-    if (dx > 0) { dc = 1; dr = -1 }
-    else if (dx < 0) { dc = -1; dr = 1 }
-    else if (dy > 0) { dc = 1; dr = 1 }
-    else if (dy < 0) { dc = -1; dr = -1 }
-
+    // Crossy controls relative to the road:
+    // up/down = perpendicular (change row); left/right = parallel (change col).
+    var dc = dx
+    var dr = dy
     var nc = chickCol + dc
     var nr = chickRow + dr
     if (nc >= 1 && nc <= cols && nr >= 1 && nr <= rows) {
@@ -240,10 +237,10 @@ Item {
       width: playW
       height: playH
       anchors.centerIn: parent
-      // User-tunable size + whole-scene rotation for matching Crossy Road.
       scale: root.viewScale
-      rotation: root.viewRotationDeg
       transformOrigin: Item.Center
+      // Clip rotated world so cars never draw outside the upright card.
+      clip: true
 
       // Block dismiss when interacting with the game card.
       MouseArea {
@@ -252,13 +249,23 @@ Item {
         onClicked: keyCatcher.forceActiveFocus()
       }
 
+      // Upright window chrome (does not rotate with ROT).
       Rectangle {
         anchors.fill: parent
         color: sky
         border.color: Qt.rgba(ink.r, ink.g, ink.b, 0.45)
         border.width: 2
         radius: 4
+        z: 0
       }
+
+      // World only — road/cars/chick rotate for Crossy match.
+      Item {
+        id: world
+        anchors.fill: parent
+        rotation: root.viewRotationDeg
+        transformOrigin: Item.Center
+        z: 1
 
       Canvas {
         id: playfield
@@ -347,27 +354,7 @@ Item {
           ctx.setLineDash([])
           ctx.restore()
 
-          // Live angle + rotation HUD (match against Crossy Road)
-          ctx.save()
-          ctx.font = "bold 22px monospace"
-          ctx.textAlign = "left"
-          ctx.textBaseline = "top"
-          ctx.fillStyle = accent
-          ctx.fillText("ANGLE  " + root.angleLabel(), 16, 14)
-          ctx.fillText("ROT    " + root.rotationLabel(), 16, 42)
-          ctx.font = "12px monospace"
-          ctx.fillStyle = ink
-          ctx.fillText("[ ] angle ±0.5°   ; ' rot ±1°   - = size   ESC close", 16, 72)
-          ctx.restore()
-
-          // Instructions
-          ctx.save()
-          ctx.font = "bold 14px monospace"
-          ctx.textAlign = "center"
-          ctx.textBaseline = "middle"
-          ctx.fillStyle = ink
-          ctx.fillText("ARROWS / WASD  HOP    M  MUTE", playW / 2, playH - 18)
-          ctx.restore()
+          // (ANGLE/ROT HUD is drawn upright on gameFrame, not in the rotated world)
         }
       }
 
@@ -400,6 +387,48 @@ Item {
         source: Qt.resolvedUrl("assets/baked/bacon/chicken-ne.png")
         smooth: false
         z: 4
+      }
+      } // world
+
+      // Upright HUD (does not spin with ROT)
+      Column {
+        anchors.left: parent.left
+        anchors.top: parent.top
+        anchors.margins: 14
+        spacing: 4
+        z: 20
+        Text {
+          text: "ANGLE  " + root.angleLabel()
+          color: accent
+          font.pixelSize: 22
+          font.bold: true
+          font.family: "monospace"
+        }
+        Text {
+          text: "ROT    " + root.rotationLabel()
+          color: accent
+          font.pixelSize: 22
+          font.bold: true
+          font.family: "monospace"
+        }
+        Text {
+          text: "[ ] angle  ; ' rot  - = size  ESC close"
+          color: ink
+          font.pixelSize: 12
+          font.family: "monospace"
+        }
+      }
+
+      Text {
+        anchors.horizontalCenter: parent.horizontalCenter
+        anchors.bottom: parent.bottom
+        anchors.bottomMargin: 12
+        z: 20
+        text: "ARROWS / WASD  HOP    M  MUTE"
+        color: ink
+        font.pixelSize: 14
+        font.bold: true
+        font.family: "monospace"
       }
 
       NumberAnimation {

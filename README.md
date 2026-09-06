@@ -29,7 +29,7 @@ After QML edits: `omarchy restart shell`.
 
 ## Controls
 
-- Arrow keys or `W`/`A`/`S`/`D`: hop one tile
+- Arrow keys or `W`/`A`/`S`/`D`: hop — up/down across the road, left/right along it
 Defaults (Crossy-like dimetric, not true isometric): **ANGLE 40°**, **ROT −26°** (user-matched). Fine-tune still live via hotkeys.
 
 - `[` / `]`: nudge road **angle** (steepness) ±0.5° — HUD `ANGLE`
