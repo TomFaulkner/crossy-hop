@@ -416,11 +416,15 @@ Item {
         Item {
           required property int index
           property var car: root.cars[index]
+          // Sprites are baked for ROT 0°; spin them with viewRotationDeg so noses
+          // stay aligned with the road when ROT is nonzero (e.g. -26°).
           x: { root.frame; return root.carScreenX(car) - car.w / 2 }
           y: { root.frame; return root.carScreenY(car) - car.h / 2 - 6 }
           width: car.w
           height: car.h
           z: { root.frame; return 3 + (car.lane === 2 ? 0.5 : 0) + car.t / 200 }
+          rotation: root.viewRotationDeg
+          transformOrigin: Item.Center
 
           Image {
             anchors.fill: parent
@@ -440,6 +444,8 @@ Item {
         source: Qt.resolvedUrl("assets/baked/bacon/chicken-ne.png")
         smooth: false
         z: 4
+        rotation: root.viewRotationDeg
+        transformOrigin: Item.Center
       }
 
       // Upright HUD (does not spin with ROT)
