@@ -38,17 +38,21 @@ After QML edits: `omarchy restart shell`.
 
 ## Assets
 
-- **Gameplay sprites:** `assets/sprites/*` — Kenney official preview PNGs (CC0), upright.
-  SE traffic uses a horizontal flip; NW uses the stock SW preview as a stand-in.
-  `assets/baked/*` + `tools/bake_sprites.py` remain experimental (soft rasterizer still shards).
+- **Gameplay sprites:** `assets/baked/*` — upright dimetric PNGs baked from Kenney GLBs with
+  Blender 5.2 EEVEE (`tools/bake_blender.py`). Cars use SE/NW facings; chick uses NE.
+  No horizontal flip at draw time.
+- **Preview fallbacks:** `assets/sprites/*` — Kenney official preview PNGs (optional stand-ins).
 - **Source GLBs:** `assets/kenney/*.glb` (car bodies already include wheel meshes;
-  `wheel-default.glb` is also there for a future spin pass).
-- **Re-bake:** `tools/bake_sprites.py`
+  `wheel-default.glb` is also there for a future spin pass). The glTF importer expects
+  `assets/kenney/Textures/colormap.png` (symlink to `../colormap.png`).
+- **Re-bake (Blender, preferred):**
 
 ```sh
-python3 -m venv .venv && .venv/bin/pip install trimesh pillow numpy
-.venv/bin/python tools/bake_sprites.py --size 320
+# Blender 5.2+ on PATH
+blender --background --python tools/bake_blender.py -- --size 512 --out-height 96
 ```
+
+- **Legacy soft rasterizer** (often shards): `tools/bake_sprites.py`
 
 ## License
 
