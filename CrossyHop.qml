@@ -126,10 +126,12 @@ Item {
   function spawnCar(lane) {
     var row = lane === 1 ? roadRow1 : roadRow2
     var dir = lane === 1 ? 1 : -1
-    // Blender-baked SE/NW facings (tools/bake_blender.py). No xScale flip.
-    var img = (lane === 1)
-      ? (dir === 1 ? "assets/baked/sedan-e.png" : "assets/baked/sedan-w.png")
-      : (dir === 1 ? "assets/baked/race-e.png" : "assets/baked/race-w.png")
+    // Bacon MagicaVoxel SE/NW facings (tools/bake_bacon_blender.py). No xScale flip.
+    // Variety: orange / blue / green; facing by travel dir (e = SE, w = NW).
+    var palette = ["orange", "blue", "green"]
+    var color = palette[Math.floor(Math.random() * palette.length)]
+    var facing = (dir === 1) ? "e" : "w"
+    var img = "assets/baked/bacon/" + color + "-" + facing + ".png"
     var t = dir === 1 ? -1 : cols + 2
     var speed = 1.2 + Math.random() * 1.0
     if (lane === 2) speed += 0.6
@@ -395,7 +397,7 @@ Item {
         y: root.centerY(chickCol, chickRow) - 56 - hopZ
         width: 80
         height: 80
-        source: Qt.resolvedUrl("assets/baked/chick-ne.png")
+        source: Qt.resolvedUrl("assets/baked/bacon/chicken-ne.png")
         smooth: false
         z: 4
       }

@@ -5,7 +5,7 @@ A tiny isometric Crossy Road-ish overlay demo as a native
 
 It runs inside the long-lived `omarchy-shell` Quickshell process. Click the
 bar icon to open a fullscreen overlay: grass, a two-lane road, cars crossing
-in both directions, and a Kenney chick you can hop with arrows / WASD.
+in both directions, and an Evan Bacon MagicaVoxel chick you can hop with arrows / WASD.
 
 This is a proof-of-concept, not a full game.
 
@@ -40,17 +40,26 @@ Defaults (Crossy-like dimetric, not true isometric): **ANGLE 40°**, **ROT −26
 
 ## Assets
 
-- **Gameplay sprites:** `assets/baked/*` — upright dimetric PNGs baked from Kenney GLBs with
-  Blender 5.2 EEVEE (`tools/bake_blender.py`). Cars use SE/NW facings; chick uses NE.
-  No horizontal flip at draw time.
-- **Preview fallbacks:** `assets/sprites/*` — Kenney official preview PNGs (optional stand-ins).
-- **Source GLBs:** `assets/kenney/*.glb` (car bodies already include wheel meshes;
-  `wheel-default.glb` is also there for a future spin pass). The glTF importer expects
-  `assets/kenney/Textures/colormap.png` is created as a **real copy** at bake time (gitignored; Omarchy forbids symlinks in plugins).
-- **Re-bake (Blender, preferred):**
+- **Gameplay sprites (active):** `assets/baked/bacon/*` — upright dimetric PNGs baked from
+  Evan Bacon MagicaVoxel OBJs (`tools/bake_bacon_blender.py`). Chicken NE; cars SE/NW
+  (`orange`/`blue`/`green`). No horizontal flip at draw time.
+- **Source models:** `assets/bacon/{chicken,orange_car,blue_car,green_car}/` — `0.obj` + `0.png`
+  from [Expo-Crossy-Road](https://github.com/EvanBacon/Expo-Crossy-Road) (MIT), plus local
+  `.mtl` stubs so Blender can bind textures. See `assets/bacon/NOTICE`.
+- **Kenney (unused / fallback):** `assets/kenney/*.glb`, `assets/baked/{sedan,race,chick}-*.png`,
+  `assets/sprites/*`. Re-bake with `tools/bake_blender.py` if needed. glTF expects
+  `assets/kenney/Textures/colormap.png` as a **real copy** at bake time (gitignored;
+  Omarchy forbids symlinks in plugins).
+- **Re-bake Bacon sprites:**
 
 ```sh
 # Blender 5.2+ on PATH
+blender --background --python tools/bake_bacon_blender.py -- --size 512 --out-height 96
+```
+
+- **Re-bake Kenney (fallback):**
+
+```sh
 blender --background --python tools/bake_blender.py -- --size 512 --out-height 96
 ```
 
@@ -58,4 +67,7 @@ blender --background --python tools/bake_blender.py -- --size 512 --out-height 9
 
 ## License
 
-Plugin code is MIT — see [LICENSE](LICENSE). Kenney assets are CC0 — see [NOTICE.md](NOTICE.md).
+Plugin code is MIT — see [LICENSE](LICENSE).
+Bacon MagicaVoxel models: MIT (Evan Bacon / Expo-Crossy-Road) with educational/fair-use
+framing noted in his README — see [NOTICE.md](NOTICE.md).
+Kenney assets remaining in-tree are CC0 — see [NOTICE.md](NOTICE.md).

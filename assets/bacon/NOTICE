@@ -1,0 +1,19 @@
+Evan Bacon MagicaVoxel models
+=============================
+
+Source: https://github.com/EvanBacon/Expo-Crossy-Road
+  assets/models/characters/chicken/
+  assets/models/vehicles/{orange_car,blue_car,green_car}/
+
+Copyright (c) 2016-present Evan Bacon.
+Licensed under the MIT License (see that repo's LICENSE).
+
+Evan Bacon's README states the Expo Crossy Road project is strictly for
+educational purposes and uses copyrighted Crossy Road-style work under a
+fair use / educational purpose framing; he is not associated with Hipster Whale.
+
+The .obj/.png files here are copies of his MagicaVoxel exports. Companion
+.mtl files were added locally so Blender can bind map_Kd to 0.png (the
+upstream repo loads texture in code, without shipping .mtl).
+
+Do not introduce symlinks under this tree (Omarchy plugins reject them).
