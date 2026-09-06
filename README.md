@@ -35,12 +35,11 @@ After QML edits: `omarchy restart shell`.
 
 ## Assets
 
-- **Gameplay sprites (current):** Kenney official `assets/kenney/previews/*.png` (CC0).
-  Opposite traffic mirrors the preview with `xScale: -1`.
-- **GLBs:** `assets/kenney/*.glb` including separate `wheel-default.glb` (for future spinning wheels).
-- **Bake experiment:** `tools/bake_sprites.py` renders GLBs → `assets/baked/`. The software
-  rasterizer is not production-quality yet (wrong camera/UVs); previews are what the PoC uses
-  until the bake looks right.
+- **Gameplay sprites:** `assets/baked/*` from Kenney GLBs (CC0), aimed SE/NW along the road
+  (cars) and NE (chick). These are full 3D meshes rendered to sprites — not preview cutouts.
+- **Source GLBs:** `assets/kenney/*.glb` (car bodies already include wheel meshes;
+  `wheel-default.glb` is also there for a future spin pass).
+- **Re-bake:** `tools/bake_sprites.py`
 
 ```sh
 python3 -m venv .venv && .venv/bin/pip install trimesh pillow numpy
