@@ -11,7 +11,7 @@ Item {
   property bool opened: false
   property bool muted: false
 
-  // Grid / iso — Crossy dimetric defaults (not true iso 35.3/45): pitch 40°, yaw -20°.
+  // Grid / iso — Crossy dimetric defaults (not true iso): pitch 40°, yaw -26° (user-matched).
   readonly property int cols: 9
   readonly property int rows: 7
   property real isoAngleDeg: 40
@@ -24,7 +24,7 @@ Item {
   // View chrome: scale = window size; rotation = whole-scene twist (screen degrees).
   // [ ] angle (road steepness)   ; ' rotation   - = size
   property real viewScale: 0.62
-  property real viewRotationDeg: -20
+  property real viewRotationDeg: -26
   property int winW: Math.round(playW * viewScale + 32)
   property int winH: Math.round(playH * viewScale + 56)
 
