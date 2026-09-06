@@ -35,8 +35,9 @@ After QML edits: `omarchy restart shell`.
 
 ## Assets
 
-- **Gameplay sprites:** `assets/baked/*` from Kenney GLBs (CC0), aimed SE/NW along the road
-  (cars) and NE (chick). These are full 3D meshes rendered to sprites — not preview cutouts.
+- **Gameplay sprites:** `assets/sprites/*` — Kenney official preview PNGs (CC0), upright.
+  SE traffic uses a horizontal flip; NW uses the stock SW preview as a stand-in.
+  `assets/baked/*` + `tools/bake_sprites.py` remain experimental (soft rasterizer still shards).
 - **Source GLBs:** `assets/kenney/*.glb` (car bodies already include wheel meshes;
   `wheel-default.glb` is also there for a future spin pass).
 - **Re-bake:** `tools/bake_sprites.py`

@@ -11,14 +11,13 @@ Item {
   property bool opened: false
   property bool muted: false
 
-  // Grid / iso constants — softened toward Crossy Road (~21.6° from horizontal)
-  // atan(tileH/tileW) = atan(38/96) ≈ 21.6° (gentler than classic 2:1 iso ≈ 26.6°)
+  // Grid / iso — clearly flatter than classic 2:1 (~27°). atan(32/112) ≈ 15.9°.
   readonly property int cols: 9
   readonly property int rows: 7
-  readonly property int tileW: 96
-  readonly property int tileH: 38
-  readonly property int playW: 900
-  readonly property int playH: 480
+  readonly property int tileW: 112
+  readonly property int tileH: 32
+  readonly property int playW: 980
+  readonly property int playH: 460
   readonly property int roadRow1: 3
   readonly property int roadRow2: 4
 
@@ -99,18 +98,19 @@ Item {
   function spawnCar(lane) {
     var row = lane === 1 ? roadRow1 : roadRow2
     var dir = lane === 1 ? 1 : -1
-    // Baked GLB sprites at SE (dir+1) / NW (dir-1) — no x-flip.
+    // Kenney official preview PNGs (upright). Preview faces SW; flip = SE for dir=+1.
+    // Unflipped SW stands in for NW until a real GLB bake is solid.
     var img = (lane === 1)
-      ? (dir === 1 ? "assets/baked/sedan-e.png" : "assets/baked/sedan-w.png")
-      : (dir === 1 ? "assets/baked/race-e.png" : "assets/baked/race-w.png")
+      ? (dir === 1 ? "assets/sprites/sedan-flip.png" : "assets/sprites/sedan.png")
+      : (dir === 1 ? "assets/sprites/race-flip.png" : "assets/sprites/race.png")
     var t = dir === 1 ? -1 : cols + 2
     var speed = 1.2 + Math.random() * 1.0
     if (lane === 2) speed += 0.6
     var car = {
       t: t,
       row: row,
-      w: 110,
-      h: 68,
+      w: 88,
+      h: 88,
       dir: dir,
       speed: speed,
       image: img,
@@ -345,11 +345,11 @@ Item {
 
       Image {
         id: chick
-        x: root.centerX(chickCol, chickRow) - 36
-        y: root.centerY(chickCol, chickRow) - 52 - hopZ
-        width: 72
-        height: 72
-        source: Qt.resolvedUrl("assets/baked/chick-ne.png")
+        x: root.centerX(chickCol, chickRow) - 40
+        y: root.centerY(chickCol, chickRow) - 56 - hopZ
+        width: 80
+        height: 80
+        source: Qt.resolvedUrl("assets/sprites/chick.png")
         smooth: false
         z: 4
       }
