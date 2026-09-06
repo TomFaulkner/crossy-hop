@@ -11,10 +11,10 @@ Item {
   property bool opened: false
   property bool muted: false
 
-  // Grid / iso — live angle (degrees from horizontal). tileH = tileW * tan(angle).
+  // Grid / iso — live angle (deg from horizontal). Default matched to Crossy Road: 30.6° / rot -20°.
   readonly property int cols: 9
   readonly property int rows: 7
-  property real isoAngleDeg: 22.6
+  property real isoAngleDeg: 30.6
   property real tileW: 96
   property real tileH: tileW * Math.tan(isoAngleDeg * Math.PI / 180)
   readonly property int playW: 900
@@ -24,7 +24,7 @@ Item {
   // View chrome: scale = window size; rotation = whole-scene twist (screen degrees).
   // [ ] angle (road steepness)   ; ' rotation   - = size
   property real viewScale: 0.62
-  property real viewRotationDeg: 0
+  property real viewRotationDeg: -20
   property int winW: Math.round(playW * viewScale + 32)
   property int winH: Math.round(playH * viewScale + 56)
 
