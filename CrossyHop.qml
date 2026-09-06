@@ -21,7 +21,7 @@ Item {
   readonly property int playH: 480
   readonly property int roadRow1: 3
   readonly property int roadRow2: 4
-  // View chrome: scale = window size; rotation twists the world only (card stays axis-aligned).
+  // View chrome: scale = window size; ROT is baked into isoX/isoY (card stays full + upright).
   // [ ] angle (road steepness)   ; ' rotation   - = size
   property real viewScale: 0.62
   property real viewRotationDeg: -26
@@ -88,6 +88,7 @@ Item {
 
   function nudgeAngle(delta) {
     isoAngleDeg = Math.round((Math.max(8, Math.min(50, isoAngleDeg + delta))) * 10) / 10
+    frame++
     playfield.requestPaint()
   }
 
@@ -97,6 +98,8 @@ Item {
 
   function nudgeRotation(delta) {
     viewRotationDeg = Math.round((Math.max(-45, Math.min(45, viewRotationDeg + delta))) * 10) / 10
+    frame++
+    playfield.requestPaint()
   }
 
   function angleLabel() {
@@ -107,12 +110,27 @@ Item {
     return viewRotationDeg.toFixed(1) + "°"
   }
 
+  // Local iso offset, then apply viewRotationDeg so ROT fills the upright card
+  // (no Item.rotation — that clipped the grass and left cars on empty sky).
+  function isoLocal(col, row) {
+    return {
+      x: (col - row) * tileW / 2,
+      y: (col + row) * tileH / 2
+    }
+  }
+
   function isoX(col, row) {
-    return (col - row) * tileW / 2 + playW / 2
+    var p = isoLocal(col, row)
+    var r = viewRotationDeg * Math.PI / 180
+    var c = Math.cos(r), s = Math.sin(r)
+    return p.x * c - p.y * s + playW / 2
   }
 
   function isoY(col, row) {
-    return (col + row) * tileH / 2 + 36
+    var p = isoLocal(col, row)
+    var r = viewRotationDeg * Math.PI / 180
+    var c = Math.cos(r), s = Math.sin(r)
+    return p.x * s + p.y * c + playH / 2 - (rows * tileH) / 4
   }
 
   function centerX(col, row) {
@@ -239,8 +257,6 @@ Item {
       anchors.centerIn: parent
       scale: root.viewScale
       transformOrigin: Item.Center
-      // Clip rotated world so cars never draw outside the upright card.
-      clip: true
 
       // Block dismiss when interacting with the game card.
       MouseArea {
@@ -249,7 +265,6 @@ Item {
         onClicked: keyCatcher.forceActiveFocus()
       }
 
-      // Upright window chrome (does not rotate with ROT).
       Rectangle {
         anchors.fill: parent
         color: sky
@@ -259,17 +274,10 @@ Item {
         z: 0
       }
 
-      // World only — road/cars/chick rotate for Crossy match.
-      Item {
-        id: world
-        anchors.fill: parent
-        rotation: root.viewRotationDeg
-        transformOrigin: Item.Center
-        z: 1
-
       Canvas {
         id: playfield
         anchors.fill: parent
+        z: 1
 
         function drawDiamond(ctx, cx, cy, w, h, fill, stroke) {
           ctx.save()
@@ -311,6 +319,10 @@ Item {
           var ctx = getContext("2d")
           ctx.reset()
           ctx.imageSmoothingEnabled = false
+
+          // Full-card ground so ROT never leaves empty sky holes around the grid.
+          ctx.fillStyle = grass
+          ctx.fillRect(0, 0, playW, playH)
 
           var stroke = Qt.rgba(root.ink.r, root.ink.g, root.ink.b, 0.12)
 
@@ -388,7 +400,6 @@ Item {
         smooth: false
         z: 4
       }
-      } // world
 
       // Upright HUD (does not spin with ROT)
       Column {
