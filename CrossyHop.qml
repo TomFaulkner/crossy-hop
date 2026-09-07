@@ -94,6 +94,7 @@ Item {
 
   property real lastTick: 0
   property real clock: 0
+  property real paintAcc: 0
   property int frame: 0
 
   readonly property string pluginId: "io.github.tomfaulkner.crossy-hop"
@@ -410,8 +411,12 @@ Item {
   // ---------------------------------------------------------------------------
   // Simulation
   // ---------------------------------------------------------------------------
+  // Returns true when the traffic roster changed (spawn/despawn). Callers must
+  // NOT rebuild flat lists every frame — that thrashes Repeaters and crashes QS.
   function updateWorld(dt) {
     var keys = Object.keys(laneMap)
+    var rosterDirty = false
+    var paintDirty = false
     for (var i = 0; i < keys.length; i++) {
       var lane = laneMap[keys[i]]
       lane.spawnT += dt
@@ -419,32 +424,37 @@ Item {
       if (lane.type === "road") {
         if (lane.spawnT >= lane.interval) {
           lane.spawnT = 0
-          spawnVehicle(lane, null)
+          if (lane.vehicles.length < 8 && spawnVehicle(lane, null)) rosterDirty = true
         }
       } else if (lane.type === "river") {
         if (lane.spawnT >= lane.interval) {
           lane.spawnT = 0
-          spawnLog(lane, null)
+          if (lane.vehicles.length < 6 && spawnLog(lane, null)) rosterDirty = true
         }
       } else if (lane.type === "rail") {
         if (lane.vehicles.length === 0 && lane.spawnT >= lane.interval) {
           lane.spawnT = 0
           spawnTrain(lane)
           lane.interval = 4 + Math.random() * 4
+          rosterDirty = true
         }
-        lane.warn = (lane.vehicles.length > 0 || lane.spawnT > lane.interval - 1.9) ? 1 : 0
+        var warn = (lane.vehicles.length > 0 || lane.spawnT > lane.interval - 1.9) ? 1 : 0
+        if (warn !== lane.warn) { lane.warn = warn; paintDirty = true }
       }
 
       var alive = []
+      var before = lane.vehicles.length
       for (var j = 0; j < lane.vehicles.length; j++) {
         var v = lane.vehicles[j]
         v.t += v.dir * v.speed * dt
         var margin = v.len + 2
         if (v.t > -margin && v.t < cols + margin) alive.push(v)
       }
+      if (alive.length !== before) rosterDirty = true
       lane.vehicles = alive
     }
-    rebuildTraffic()
+    if (rosterDirty) rebuildTraffic()
+    return paintDirty || rosterDirty
   }
 
   function checkChick(dt) {
@@ -491,6 +501,7 @@ Item {
 
   function step(dt) {
     clock += dt
+    var needPaint = false
     if (dying) {
       deathClock += dt
       if (deathClock >= deathFreeze) {
@@ -498,15 +509,23 @@ Item {
         gameOver = true
         overClock = 0
         if (score > best) best = score
+        needPaint = true
       }
     } else if (gameOver) {
       overClock += dt
     } else {
-      updateWorld(dt)
+      if (updateWorld(dt)) needPaint = true
       checkChick(dt)
+      if (dying) needPaint = true
     }
+    // Positions bind to `frame`; keep that hot. Canvas only when lanes/warn change
+    // or on a slow tick (train-light blink ~5Hz).
     frame++
-    playfield.requestPaint()
+    paintAcc += dt
+    if (needPaint || paintAcc >= 0.18 || hopAnim.running || scrollAnim.running) {
+      paintAcc = 0
+      playfield.requestPaint()
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -581,8 +600,10 @@ Item {
     deathCause = ""
     deathClock = 0
     overClock = 0
+    paintAcc = 0
     ensureLanes(rows + 2)
     refreshView()
+    playfield.requestPaint()
   }
 
   // ---------------------------------------------------------------------------
