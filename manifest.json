@@ -2,10 +2,10 @@
   "schemaVersion": 1,
   "id": "io.github.tomfaulkner.crossy-hop",
   "name": "Crossy Hop",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "Tom",
   "license": "MIT",
-  "description": "A tiny isometric Crossy Road-ish overlay demo for omarchy-shell.",
+  "description": "An isometric Crossy Road-ish overlay game for omarchy-shell: endless lanes, traffic, rivers, trains, score and game over.",
   "kinds": ["bar-widget", "overlay"],
   "keepLoaded": true,
   "entryPoints": {
@@ -14,7 +14,7 @@
   },
   "barWidget": {
     "displayName": "Crossy Hop",
-    "description": "Open the Crossy Hop overlay demo",
+    "description": "Open Crossy Hop and start a run",
     "category": "Fun",
     "allowMultiple": false,
     "defaultSection": "right"

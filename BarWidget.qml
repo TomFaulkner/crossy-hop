@@ -14,7 +14,7 @@ BarWidget {
     anchors.fill: parent
     bar: root.bar
     text: "󰆙"
-    tooltipText: "Open Crossy Hop"
+    tooltipText: "Open Crossy Hop  (SCORE: cross the road)"
 
     onPressed: function(mouseButton) {
       if (!root.bar || mouseButton !== Qt.LeftButton) return

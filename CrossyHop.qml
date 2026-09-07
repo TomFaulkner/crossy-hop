@@ -12,15 +12,15 @@ Item {
   property bool muted: false
 
   // Grid / iso — Crossy dimetric defaults (not true iso): pitch 40°, yaw -26° (user-matched).
+  // `rows` is the sliding window height: only ~9 rows of the infinite world exist at a time.
   readonly property int cols: 9
-  readonly property int rows: 7
+  readonly property int rows: 9
   property real isoAngleDeg: 40
   property real tileW: 96
   property real tileH: tileW * Math.tan(isoAngleDeg * Math.PI / 180)
   readonly property int playW: 900
   readonly property int playH: 480
-  readonly property int roadRow1: 3
-  readonly property int roadRow2: 4
+
   // View chrome: scale = window size; ROT is baked into isoX/isoY (card stays full + upright).
   // [ ] angle (road steepness)   ; ' rotation   - = size
   property real viewScale: 0.62
@@ -37,33 +37,561 @@ Item {
   readonly property color grass: Qt.tint(night, Qt.rgba(0.35, 0.78, 0.40, 0.55))
   readonly property color road: Qt.tint(night, Qt.rgba(ink.r, ink.g, ink.b, 0.45))
   readonly property color roadMark: Qt.lighter(road, 1.6)
+  readonly property color water: Qt.tint(night, Qt.rgba(0.20, 0.45, 0.88, 0.60))
+  readonly property color waterMark: Qt.lighter(water, 1.5)
+  readonly property color railBed: Qt.tint(night, Qt.rgba(0.60, 0.56, 0.50, 0.45))
+  readonly property color railMetal: Qt.lighter(railBed, 1.9)
+  readonly property color logBrown: "#6b4a2a"
+  readonly property color logEdge: "#4a2f18"
+  readonly property color treeGreen: "#2f7a3a"
+  readonly property color treeDark: "#1f5227"
+  readonly property color trunkBrown: "#5a3c22"
+  readonly property color rockGray: "#7d8088"
+  readonly property color rockDark: "#4b4e56"
 
-  // Game state
-  property int chickCol: 5
-  property int chickRow: 6
+  // ---------------------------------------------------------------------------
+  // World model
+  //
+  // Absolute row `ar` grows as the chick advances (forward = up-screen = away).
+  //   screenRow(ar) = rows - (ar - winAnchor)
+  // `winAnchor` is the absolute row pinned to the bottom screen row. It is a
+  // real number so a forward hop can animate the whole world downward.
+  // `winAnchorTarget` is the integer it settles on; all game logic uses that.
+  // ---------------------------------------------------------------------------
+  property int winAnchorTarget: 0
+  property real winAnchor: 0
+  property var laneMap: ({})
+  property int nextAr: 0
+  property string genLastType: "grass"
+  property int genRun: 0
+
+  // Flat render lists (rebuilt by refreshView / rebuildTraffic).
+  property var flatProps: []
+  property var flatTraffic: []
+  property var flatLogs: []
+
+  readonly property int startAr: 2          // safe grass rows live at ar <= 2
+  readonly property int minChickScreenRow: rows - 3
+
+  // Chick (col is fractional: logs carry the chick)
+  property real chickColF: 5
+  property int chickAr: 2
+  property real visCol: 5
+  property real visAr: 2
   property real hopZ: 0
-  property var cars: []
-  property real spawnTimer1: 0
-  property real spawnTimer2: 0
+  property real chickSquash: 1
+  property string chickFacing: "ne"
+
+  // Run state
+  property int score: 0
+  property int best: 0
+  property bool dying: false
+  property bool gameOver: false
+  property real deathClock: 0
+  property real overClock: 0
+  property string deathCause: ""
+  readonly property real deathFreeze: 0.5   // traffic freeze before the overlay
+
   property real lastTick: 0
+  property real clock: 0
   property int frame: 0
 
   readonly property string pluginId: "io.github.tomfaulkner.crossy-hop"
 
+  // ---------------------------------------------------------------------------
+  // Iso projection (ROT baked in; center + fit keeps the upright card filled)
+  // ---------------------------------------------------------------------------
+  function isoLocal(col, row) {
+    return {
+      x: (col - row) * tileW / 2,
+      y: (col + row) * tileH / 2
+    }
+  }
+
+  function gridCentroidLocal() {
+    return isoLocal((1 + cols) / 2, (1 + rows) / 2)
+  }
+
+  // Uniform fit factor: AABB of every cell center after ROT, padded by the tile
+  // half-extent, scaled into the play card. Pure function of the camera props,
+  // so QML re-evaluates the binding whenever ANGLE/ROT/size changes.
+  function computeFitScale() {
+    var mid = gridCentroidLocal()
+    var r = viewRotationDeg * Math.PI / 180
+    var c = Math.cos(r), s = Math.sin(r)
+    var minX = 1e9, maxX = -1e9, minY = 1e9, maxY = -1e9
+    for (var row = 1; row <= rows; row++) {
+      for (var col = 1; col <= cols; col++) {
+        var p = isoLocal(col, row)
+        var px = (p.x - mid.x) * c - (p.y - mid.y) * s
+        var py = (p.x - mid.x) * s + (p.y - mid.y) * c
+        if (px < minX) minX = px
+        if (px > maxX) maxX = px
+        if (py < minY) minY = py
+        if (py > maxY) maxY = py
+      }
+    }
+    var pad = Math.max(tileW, tileH) * 0.75
+    var bw = (maxX - minX) + pad * 2
+    var bh = (maxY - minY) + pad * 2
+    return Math.min((playW * 0.92) / bw, (playH * 0.88) / bh)
+  }
+
+  readonly property real fitScale: root.computeFitScale()
+
+  function projDelta(lx, ly) {
+    var r = viewRotationDeg * Math.PI / 180
+    var c = Math.cos(r), s = Math.sin(r)
+    return {
+      x: (lx * c - ly * s) * fitScale,
+      y: (lx * s + ly * c) * fitScale
+    }
+  }
+
+  // Screen-space delta for one step along the road (col) and across it (row).
+  readonly property var colVec: projDelta(tileW / 2, tileH / 2)
+  readonly property var rowVec: projDelta(-tileW / 2, tileH / 2)
+  readonly property real unit: Math.sqrt(colVec.x * colVec.x + colVec.y * colVec.y)
+  readonly property real carH: unit * 1.80
+  readonly property real carW: carH * 1.15
+  readonly property real chickH: unit * 1.85
+  readonly property real chickW: chickH * 0.63
+  readonly property real propW: unit * 1.00
+  readonly property real propH: unit * 1.70
+  // Lane bands / grass tiles run well past the grid so ROT never shows card edges.
+  readonly property int bandC0: -12
+  readonly property int bandC1: cols + 13
+  readonly property int tileC0: -8
+  readonly property int tileC1: cols + 9
+
+  function projectLocal(lx, ly) {
+    var mid = gridCentroidLocal()
+    var x = lx - mid.x
+    var y = ly - mid.y
+    var r = viewRotationDeg * Math.PI / 180
+    var c = Math.cos(r), s = Math.sin(r)
+    return {
+      x: (x * c - y * s) * fitScale + playW / 2,
+      y: (x * s + y * c) * fitScale + playH / 2
+    }
+  }
+
+  function centerX(col, row) {
+    var p = isoLocal(col, row)
+    return projectLocal(p.x, p.y).x
+  }
+
+  function centerY(col, row) {
+    var p = isoLocal(col, row)
+    return projectLocal(p.x, p.y).y
+  }
+
+  // Kept for any leftover callers; same as cell center (diamonds draw from center).
+  function isoX(col, row) { return centerX(col, row) }
+  function isoY(col, row) { return centerY(col, row) }
+
+  // Fractional screen row of an absolute row (uses the animated anchor).
+  function screenRowF(ar) { return rows - (ar - winAnchor) }
+  // Gameplay screen row (uses the settled integer anchor).
+  function screenRowOf(ar) { return rows - (ar - winAnchorTarget) }
+
+  function zFor(ar, bias) {
+    return 3 + screenRowF(ar) * 0.1 + (bias || 0)
+  }
+
+  // ---------------------------------------------------------------------------
+  // Lane generation
+  // ---------------------------------------------------------------------------
+  function makeLane(ar, type) {
+    return {
+      ar: ar,
+      type: type,          // grass | road | river | rail
+      dir: 1,
+      speed: 1,
+      interval: 2,
+      spawnT: 0,
+      warn: 0,
+      obstacles: [],       // [{col, kind}] — grass blockers
+      vehicles: []         // cars | trains | logs
+    }
+  }
+
+  function pick(list) {
+    return list[Math.floor(Math.random() * list.length)]
+  }
+
+  function maxRoadRun(ar) {
+    return ar < 12 ? 2 : (ar < 30 ? 3 : 4)
+  }
+
+  // Hazards are always separated by at least one safe grass row.
+  function nextType(ar) {
+    if (genLastType === "rail") return "grass"
+    if (genLastType === "river")
+      return (genRun < 3 && Math.random() < 0.72) ? "river" : "grass"
+    if (genLastType === "road")
+      return (genRun < maxRoadRun(ar) && Math.random() < 0.45) ? "road" : "grass"
+    var r = Math.random()
+    var railChance = ar < 6 ? 0.0 : 0.10
+    var riverChance = ar < 5 ? 0.0 : 0.18
+    var roadChance = 0.32
+    if (r < railChance) return "rail"
+    if (r < railChance + riverChance) return "river"
+    if (r < railChance + riverChance + roadChance) return "road"
+    return "grass"
+  }
+
+  function difficulty(ar) {
+    return 1 + Math.min(ar, 80) / 90
+  }
+
+  function generateLane(ar) {
+    var type = (ar <= startAr) ? "grass" : nextType(ar)
+    var lane = makeLane(ar, type)
+    var diff = difficulty(ar)
+
+    if (type === "road") {
+      lane.dir = Math.random() < 0.5 ? 1 : -1
+      lane.speed = (1.1 + Math.random() * 1.2) * diff
+      lane.interval = Math.max(0.75, (2.3 + Math.random() * 1.7) / diff)
+      lane.spawnT = lane.interval * Math.random()
+      spawnVehicle(lane, Math.random() * (cols + 2) - 1)
+      if (Math.random() < 0.55) spawnVehicle(lane, null)
+    } else if (type === "river") {
+      lane.dir = Math.random() < 0.5 ? 1 : -1
+      lane.speed = (0.7 + Math.random() * 0.7) * diff
+      lane.interval = Math.max(1.1, (2.8 + Math.random() * 1.8) / diff)
+      lane.spawnT = lane.interval * Math.random()
+      spawnLog(lane, Math.random() * (cols + 2) - 1)
+      if (Math.random() < 0.5) spawnLog(lane, null)
+    } else if (type === "rail") {
+      lane.dir = Math.random() < 0.5 ? 1 : -1
+      lane.speed = 7 + Math.random() * 3
+      lane.interval = 4 + Math.random() * 4
+      lane.spawnT = 0
+    } else if (ar > startAr) {
+      // Trees / boulders block hops onto their cell.
+      var density = 0.16 + Math.min(0.12, ar / 400)
+      for (var c = 1; c <= cols; c++) {
+        if (Math.random() < density)
+          lane.obstacles.push({ col: c, kind: Math.random() < 0.72 ? "tree" : "boulder" })
+      }
+      // Never wall off a whole row.
+      if (lane.obstacles.length > cols - 3)
+        lane.obstacles.length = Math.max(1, cols - 3)
+    }
+
+    if (lane.type === genLastType) genRun++
+    else { genLastType = lane.type; genRun = 1 }
+    return lane
+  }
+
+  function ensureLanes(maxAr) {
+    while (nextAr <= maxAr) {
+      laneMap[nextAr] = generateLane(nextAr)
+      nextAr++
+    }
+  }
+
+  function pruneLanes() {
+    var lo = winAnchorTarget - 2
+    var hi = winAnchorTarget + rows + 2
+    var keys = Object.keys(laneMap)
+    for (var i = 0; i < keys.length; i++) {
+      var ar = parseInt(keys[i], 10)
+      if (ar < lo || ar > hi) delete laneMap[ar]
+    }
+  }
+
+  function isBlocked(lane, col) {
+    for (var i = 0; i < lane.obstacles.length; i++) {
+      if (lane.obstacles[i].col === col) return true
+    }
+    return false
+  }
+
+  // ---------------------------------------------------------------------------
+  // Traffic
+  // ---------------------------------------------------------------------------
+  function laneClear(lane, t, len) {
+    for (var i = 0; i < lane.vehicles.length; i++) {
+      var v = lane.vehicles[i]
+      if (Math.abs(v.t - t) < (len + v.len) * 0.5 + 0.9) return false
+    }
+    return true
+  }
+
+  function spawnVehicle(lane, t) {
+    var len = 1.6 + Math.random() * 0.5
+    if (t === null || t === undefined)
+      t = lane.dir === 1 ? -len - 1 : cols + len + 1
+    if (!laneClear(lane, t, len)) return null
+    var veh = {
+      kind: "car",
+      t: t,
+      ar: lane.ar,
+      len: len,
+      dir: lane.dir,
+      speed: lane.speed * (0.85 + Math.random() * 0.35),
+      image: "assets/baked/bacon/" + pick(["orange", "blue", "green"]) + "-" + (lane.dir === 1 ? "e" : "w") + ".png"
+    }
+    lane.vehicles.push(veh)
+    return veh
+  }
+
+  function spawnLog(lane, t) {
+    var len = 2 + Math.floor(Math.random() * 2)   // 2 or 3 tiles
+    if (t === null || t === undefined)
+      t = lane.dir === 1 ? -len - 1 : cols + len + 1
+    if (!laneClear(lane, t, len)) return null
+    var log = {
+      kind: "log",
+      t: t,
+      ar: lane.ar,
+      len: len,
+      dir: lane.dir,
+      speed: lane.speed
+    }
+    lane.vehicles.push(log)
+    return log
+  }
+
+  function spawnTrain(lane) {
+    var len = 5.5
+    var t = lane.dir === 1 ? -len - 1 : cols + len + 1
+    lane.vehicles.push({
+      kind: "train",
+      t: t,
+      ar: lane.ar,
+      len: len,
+      dir: lane.dir,
+      speed: lane.speed,
+      image: ""
+    })
+  }
+
+  function hitHalf(v) {
+    return 0.40 + v.len * 0.30
+  }
+
+  // ---------------------------------------------------------------------------
+  // Flattened render lists
+  // ---------------------------------------------------------------------------
+  function rebuildTraffic() {
+    var keys = Object.keys(laneMap)
+    var cars = []
+    var logs = []
+    for (var i = 0; i < keys.length; i++) {
+      var lane = laneMap[keys[i]]
+      for (var j = 0; j < lane.vehicles.length; j++) {
+        var v = lane.vehicles[j]
+        if (v.kind === "log") logs.push(v)
+        else cars.push(v)
+      }
+    }
+    flatTraffic = cars
+    flatLogs = logs
+  }
+
+  function refreshView() {
+    var lo = winAnchorTarget - 2
+    var hi = winAnchorTarget + rows
+    var props = []
+    for (var ar = lo; ar <= hi; ar++) {
+      var lane = laneMap[ar]
+      if (!lane) continue
+      for (var i = 0; i < lane.obstacles.length; i++)
+        props.push({ ar: ar, col: lane.obstacles[i].col, kind: lane.obstacles[i].kind })
+    }
+    flatProps = props
+    rebuildTraffic()
+  }
+
+  // ---------------------------------------------------------------------------
+  // Simulation
+  // ---------------------------------------------------------------------------
+  function updateWorld(dt) {
+    var keys = Object.keys(laneMap)
+    for (var i = 0; i < keys.length; i++) {
+      var lane = laneMap[keys[i]]
+      lane.spawnT += dt
+
+      if (lane.type === "road") {
+        if (lane.spawnT >= lane.interval) {
+          lane.spawnT = 0
+          spawnVehicle(lane, null)
+        }
+      } else if (lane.type === "river") {
+        if (lane.spawnT >= lane.interval) {
+          lane.spawnT = 0
+          spawnLog(lane, null)
+        }
+      } else if (lane.type === "rail") {
+        if (lane.vehicles.length === 0 && lane.spawnT >= lane.interval) {
+          lane.spawnT = 0
+          spawnTrain(lane)
+          lane.interval = 4 + Math.random() * 4
+        }
+        lane.warn = (lane.vehicles.length > 0 || lane.spawnT > lane.interval - 1.9) ? 1 : 0
+      }
+
+      var alive = []
+      for (var j = 0; j < lane.vehicles.length; j++) {
+        var v = lane.vehicles[j]
+        v.t += v.dir * v.speed * dt
+        var margin = v.len + 2
+        if (v.t > -margin && v.t < cols + margin) alive.push(v)
+      }
+      lane.vehicles = alive
+    }
+    rebuildTraffic()
+  }
+
+  function checkChick(dt) {
+    var lane = laneMap[chickAr]
+    if (!lane) return
+    var i, v
+
+    if (lane.type === "road") {
+      for (i = 0; i < lane.vehicles.length; i++) {
+        v = lane.vehicles[i]
+        if (Math.abs(v.t - chickColF) < hitHalf(v)) { die("car"); return }
+      }
+      return
+    }
+
+    if (lane.type === "rail") {
+      for (i = 0; i < lane.vehicles.length; i++) {
+        v = lane.vehicles[i]
+        if (Math.abs(v.t - chickColF) < hitHalf(v)) { die("train"); return }
+      }
+      return
+    }
+
+    if (lane.type === "river") {
+      var raft = null
+      for (i = 0; i < lane.vehicles.length; i++) {
+        v = lane.vehicles[i]
+        if (Math.abs(v.t - chickColF) < v.len * 0.5 + 0.30) { raft = v; break }
+      }
+      if (!raft) { die("water"); return }
+      chickColF += raft.dir * raft.speed * dt
+      if (!hopAnim.running) visCol = chickColF
+      if (chickColF < 0.6 || chickColF > cols + 0.4) die("water")
+    }
+  }
+
+  function die(cause) {
+    if (dying || gameOver) return
+    dying = true
+    deathCause = cause
+    deathClock = 0
+    squashAnim.start()
+  }
+
+  function step(dt) {
+    clock += dt
+    if (dying) {
+      deathClock += dt
+      if (deathClock >= deathFreeze) {
+        dying = false
+        gameOver = true
+        overClock = 0
+        if (score > best) best = score
+      }
+    } else if (gameOver) {
+      overClock += dt
+    } else {
+      updateWorld(dt)
+      checkChick(dt)
+    }
+    frame++
+    playfield.requestPaint()
+  }
+
+  // ---------------------------------------------------------------------------
+  // Chick
+  // ---------------------------------------------------------------------------
+  function moveChick(dc, dAr) {
+    if (gameOver) {
+      if (overClock > 0.4) resetGame()
+      return
+    }
+    if (dying) return
+
+    var newAr = chickAr + dAr
+    var newCol = Math.round(chickColF) + dc
+    var sr = screenRowOf(newAr)
+    if (sr < 1 || sr > rows) return
+    if (newCol < 1 || newCol > cols) return
+
+    ensureLanes(newAr)
+    var lane = laneMap[newAr]
+    if (lane && isBlocked(lane, newCol)) {
+      bumpAnim.start()
+      return
+    }
+
+    chickAr = newAr
+    chickColF = newCol
+    if (dAr > 0) {
+      chickFacing = "ne"
+      if (chickAr - startAr > score) score = chickAr - startAr
+    } else if (dAr < 0) {
+      chickFacing = "sw"
+    }
+
+    hopCol.from = visCol
+    hopCol.to = newCol
+    hopRow.from = visAr
+    hopRow.to = newAr
+    hopAnim.restart()
+
+    // Scroll the world so the chick stays in the bottom third.
+    var target = winAnchorTarget
+    var s = rows - (chickAr - target)
+    while (s < minChickScreenRow) { target++; s++ }
+    if (target !== winAnchorTarget) {
+      winAnchorTarget = target
+      ensureLanes(winAnchorTarget + rows + 1)
+      pruneLanes()
+      refreshView()
+      scrollAnim.to = winAnchorTarget
+      scrollAnim.restart()
+    }
+  }
+
+  function resetGame() {
+    score = 0
+    winAnchorTarget = 0
+    winAnchor = 0
+    laneMap = ({})
+    nextAr = 0
+    genLastType = "grass"
+    genRun = 0
+    chickColF = Math.round((cols + 1) / 2)
+    chickAr = startAr
+    visCol = chickColF
+    visAr = chickAr
+    hopZ = 0
+    chickSquash = 1
+    chickFacing = "ne"
+    dying = false
+    gameOver = false
+    deathCause = ""
+    deathClock = 0
+    overClock = 0
+    ensureLanes(rows + 2)
+    refreshView()
+  }
+
+  // ---------------------------------------------------------------------------
+  // Shell plumbing
+  // ---------------------------------------------------------------------------
   function open(payloadJson) {
     opened = true
-    chickCol = 5
-    chickRow = 6
-    hopZ = 0
-    cars = []
-    spawnTimer1 = 0
-    spawnTimer2 = 0
+    resetGame()
     lastTick = Date.now()
-    // Pre-warm traffic so lanes are busy immediately.
-    spawnCar(1)
-    cars[cars.length - 1].t = cols * 0.25
-    spawnCar(2)
-    cars[cars.length - 1].t = cols * 0.75
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
     playfield.requestPaint()
   }
@@ -110,146 +638,9 @@ Item {
     return viewRotationDeg.toFixed(1) + "°"
   }
 
-  // Iso cell centers in local space, then ROT around the grid centroid and
-  // uniform fit so the whole board stays inside the upright play card.
-  function isoLocal(col, row) {
-    return {
-      x: (col - row) * tileW / 2,
-      y: (col + row) * tileH / 2
-    }
-  }
-
-  function gridCentroidLocal() {
-    return isoLocal((1 + cols) / 2, (1 + rows) / 2)
-  }
-
-  // Screen-space transform for a local iso point (rotate about centroid, fit, center).
-  function projectLocal(lx, ly) {
-    var mid = gridCentroidLocal()
-    var x = lx - mid.x
-    var y = ly - mid.y
-    var r = viewRotationDeg * Math.PI / 180
-    var c = Math.cos(r), s = Math.sin(r)
-    var xr = x * c - y * s
-    var yr = x * s + y * c
-
-    // AABB of all cell centers after rotation → fit inside play area with padding.
-    var minX = 1e9, maxX = -1e9, minY = 1e9, maxY = -1e9
-    for (var row = 1; row <= rows; row++) {
-      for (var col = 1; col <= cols; col++) {
-        var p = isoLocal(col, row)
-        var px = (p.x - mid.x) * c - (p.y - mid.y) * s
-        var py = (p.x - mid.x) * s + (p.y - mid.y) * c
-        if (px < minX) minX = px
-        if (px > maxX) maxX = px
-        if (py < minY) minY = py
-        if (py > maxY) maxY = py
-      }
-    }
-    // Include diamond half-extents so tiles aren't clipped at edges.
-    var pad = Math.max(tileW, tileH) * 0.75
-    var bw = (maxX - minX) + pad * 2
-    var bh = (maxY - minY) + pad * 2
-    var fit = Math.min((playW * 0.92) / bw, (playH * 0.88) / bh)
-    return {
-      x: xr * fit + playW / 2,
-      y: yr * fit + playH / 2
-    }
-  }
-
-  function centerX(col, row) {
-    var p = isoLocal(col, row)
-    return projectLocal(p.x, p.y).x
-  }
-
-  function centerY(col, row) {
-    var p = isoLocal(col, row)
-    return projectLocal(p.x, p.y).y
-  }
-
-  // Kept for any leftover callers; same as cell center (diamonds draw from center).
-  function isoX(col, row) { return centerX(col, row) }
-  function isoY(col, row) { return centerY(col, row) }
-
-  function spawnCar(lane) {
-    var row = lane === 1 ? roadRow1 : roadRow2
-    var dir = lane === 1 ? 1 : -1
-    // Bacon MagicaVoxel SE/NW facings (tools/bake_bacon_blender.py). No xScale flip.
-    // Variety: orange / blue / green; facing by travel dir (e = SE, w = NW).
-    var palette = ["orange", "blue", "green"]
-    var color = palette[Math.floor(Math.random() * palette.length)]
-    var facing = (dir === 1) ? "e" : "w"
-    var img = "assets/baked/bacon/" + color + "-" + facing + ".png"
-    var t = dir === 1 ? -1 : cols + 2
-    var speed = 1.2 + Math.random() * 1.0
-    if (lane === 2) speed += 0.6
-    var car = {
-      t: t,
-      row: row,
-      w: 88,
-      h: 88,
-      dir: dir,
-      speed: speed,
-      image: img,
-      lane: lane,
-      mirror: false
-    }
-    cars.push(car)
-  }
-
-  function carScreenX(car) {
-    return centerX(car.t, car.row)
-  }
-
-  function carScreenY(car) {
-    return centerY(car.t, car.row)
-  }
-
-  function moveChick(dx, dy) {
-    // Crossy controls relative to the road:
-    // up/down = perpendicular (change row); left/right = parallel (change col).
-    var dc = dx
-    var dr = dy
-    var nc = chickCol + dc
-    var nr = chickRow + dr
-    if (nc >= 1 && nc <= cols && nr >= 1 && nr <= rows) {
-      chickCol = nc
-      chickRow = nr
-      hopAnim.restart()
-    }
-  }
-
-  function step(dt) {
-    // Spawn cars
-    spawnTimer1 += dt
-    spawnTimer2 += dt
-    if (spawnTimer1 > 1.6 + Math.random() * 1.2) {
-      spawnCar(1)
-      spawnTimer1 = 0
-    }
-    if (spawnTimer2 > 1.0 + Math.random() * 0.9) {
-      spawnCar(2)
-      spawnTimer2 = 0
-    }
-
-    // Move cars along their lane
-    var alive = []
-    for (var i = 0; i < cars.length; i++) {
-      var c = cars[i]
-      c.t += c.dir * c.speed * dt
-      if (c.t > -2 && c.t < cols + 3) alive.push(c)
-    }
-    cars = alive
-    frame++
-    playfield.requestPaint()
-  }
-
   Component.onCompleted: {
-    // Pre-warm a couple of cars so the road isn't empty on first open.
-    spawnCar(1)
-    cars[0].t = cols * 0.30
-    spawnCar(2)
-    cars[1].t = cols * 0.70
+    // Build a world up-front so the card is never empty (even before first open).
+    resetGame()
   }
 
   Timer {
@@ -260,6 +651,7 @@ Item {
       var now = Date.now()
       var dt = (now - root.lastTick) / 1000
       root.lastTick = now
+      if (dt > 0.25) dt = 0.25
       root.step(dt)
     }
   }
@@ -310,49 +702,141 @@ Item {
         anchors.fill: parent
         z: 1
 
-        function drawDiamond(ctx, cx, cy, w, h, fill, stroke) {
-          ctx.save()
+        // Quad along a lane: from column c0 to c1 on (possibly fractional) row.
+        function laneQuad(ctx, rowF, c0, c1, half) {
+          var ax = root.centerX(c0, rowF), ay = root.centerY(c0, rowF)
+          var bx = root.centerX(c1, rowF), by = root.centerY(c1, rowF)
+          var dx = bx - ax, dy = by - ay
+          var len = Math.sqrt(dx * dx + dy * dy) || 1
+          var nx = -dy / len, ny = dx / len
           ctx.beginPath()
-          ctx.moveTo(cx, cy - h / 2)
-          ctx.lineTo(cx + w / 2, cy)
-          ctx.lineTo(cx, cy + h / 2)
-          ctx.lineTo(cx - w / 2, cy)
+          ctx.moveTo(ax + nx * half, ay + ny * half)
+          ctx.lineTo(bx + nx * half, by + ny * half)
+          ctx.lineTo(bx - nx * half, by - ny * half)
+          ctx.lineTo(ax - nx * half, ay - ny * half)
           ctx.closePath()
+        }
+
+        function drawBand(ctx, lane, fill) {
+          var sr = root.screenRowF(lane.ar)
+          if (sr < -2 || sr > root.rows + 2) return
+          var half = Math.sqrt(root.rowVec.x * root.rowVec.x + root.rowVec.y * root.rowVec.y) * 0.5 + 1
+          ctx.save()
+          laneQuad(ctx, sr, root.bandC0, root.bandC1, half)
           ctx.fillStyle = fill
           ctx.fill()
-          if (stroke) {
-            ctx.strokeStyle = stroke
-            ctx.lineWidth = 1
-            ctx.stroke()
-          }
           ctx.restore()
         }
 
-        // Road band as a thick strip along the lane row (uses projected cell centers).
-        function drawRoadBand(ctx, row, fill) {
-          var leftC = [root.centerX(1, row), root.centerY(1, row)]
-          var rightC = [root.centerX(cols, row), root.centerY(cols, row)]
-          var dx = rightC[0] - leftC[0]
-          var dy = rightC[1] - leftC[1]
-          var len = Math.sqrt(dx * dx + dy * dy) || 1
-          var nx = -dy / len
-          var ny = dx / len
-          var half = Math.max(18, Math.min(tileH, tileW) * 0.28)
-          var extend = half * 1.2
-          var x0 = leftC[0] - (dx / len) * extend
-          var y0 = leftC[1] - (dy / len) * extend
-          var x1 = rightC[0] + (dx / len) * extend
-          var y1 = rightC[1] + (dy / len) * extend
+        // One projected tile diamond (col/row may be fractional).
+        function drawCell(ctx, colF, rowF, sx, sy, fill, stroke) {
+          var cx = root.centerX(colF, rowF)
+          var cy = root.centerY(colF, rowF)
+          var ax = root.colVec.x * sx * 0.5, ay = root.colVec.y * sx * 0.5
+          var bx = root.rowVec.x * sy * 0.5, by = root.rowVec.y * sy * 0.5
           ctx.save()
           ctx.beginPath()
-          ctx.moveTo(x0 + nx * half, y0 + ny * half)
-          ctx.lineTo(x1 + nx * half, y1 + ny * half)
-          ctx.lineTo(x1 - nx * half, y1 - ny * half)
-          ctx.lineTo(x0 - nx * half, y0 - ny * half)
+          ctx.moveTo(cx + ax, cy + ay)
+          ctx.lineTo(cx + bx, cy + by)
+          ctx.lineTo(cx - ax, cy - ay)
+          ctx.lineTo(cx - bx, cy - by)
           ctx.closePath()
-          ctx.fillStyle = fill
-          ctx.fill()
+          if (fill) { ctx.fillStyle = fill; ctx.fill() }
+          if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = 1; ctx.stroke() }
           ctx.restore()
+        }
+
+        function drawLane(ctx, lane) {
+          var sr = root.screenRowF(lane.ar)
+          if (sr < -2 || sr > root.rows + 2) return
+
+          if (lane.type === "grass") {
+            var alt = (Math.abs(lane.ar) % 2 === 0) ? root.grass : Qt.darker(root.grass, 1.10)
+            drawBand(ctx, lane, alt)
+            var stroke = Qt.rgba(root.ink.r, root.ink.g, root.ink.b, 0.10)
+            for (var c = root.tileC0; c <= root.tileC1; c++)
+              drawCell(ctx, c, sr, 0.94, 0.94, null, stroke)
+            return
+          }
+
+          if (lane.type === "road") {
+            drawBand(ctx, lane, root.road)
+            // dashed centre line along the lane direction
+            ctx.save()
+            ctx.strokeStyle = root.roadMark
+            ctx.lineWidth = Math.max(1.5, root.unit * 0.08)
+            ctx.setLineDash([root.unit * 0.55, root.unit * 0.45])
+            ctx.beginPath()
+            ctx.moveTo(root.centerX(root.bandC0, sr), root.centerY(root.bandC0, sr))
+            ctx.lineTo(root.centerX(root.bandC1, sr), root.centerY(root.bandC1, sr))
+            ctx.stroke()
+            ctx.setLineDash([])
+            ctx.restore()
+            return
+          }
+
+          if (lane.type === "river") {
+            drawBand(ctx, lane, root.water)
+            var rowLen = Math.sqrt(root.rowVec.x * root.rowVec.x + root.rowVec.y * root.rowVec.y)
+            ctx.save()
+            ctx.strokeStyle = root.waterMark
+            ctx.lineWidth = Math.max(1, root.unit * 0.05)
+            ctx.setLineDash([root.unit * 0.9, root.unit * 0.7])
+            for (var w = -1; w <= 1; w++) {
+              var off = w * rowLen * 0.28
+              var a = [root.centerX(root.bandC0, sr + off / rowLen), root.centerY(root.bandC0, sr + off / rowLen)]
+              var b = [root.centerX(root.bandC1, sr + off / rowLen), root.centerY(root.bandC1, sr + off / rowLen)]
+              ctx.beginPath()
+              ctx.moveTo(a[0], a[1])
+              ctx.lineTo(b[0], b[1])
+              ctx.stroke()
+            }
+            ctx.setLineDash([])
+            ctx.restore()
+            return
+          }
+
+          if (lane.type === "rail") {
+            drawBand(ctx, lane, root.railBed)
+            // sleepers
+            ctx.save()
+            ctx.strokeStyle = Qt.darker(root.railBed, 1.35)
+            ctx.lineWidth = Math.max(1, root.unit * 0.10)
+            for (var s = -4; s < root.cols + 5; s += 0.5) {
+              var sx = root.colVec.x * 0.18, sy = root.colVec.y * 0.18
+              var px = root.centerX(s, sr), py = root.centerY(s, sr)
+              ctx.beginPath()
+              ctx.moveTo(px - sx, py - sy)
+              ctx.lineTo(px + sx, py + sy)
+              ctx.stroke()
+            }
+            // two rails
+            ctx.strokeStyle = root.railMetal
+            ctx.lineWidth = Math.max(1, root.unit * 0.06)
+            for (var k = -1; k <= 1; k += 2) {
+              var ox = root.rowVec.x * 0.20 * k, oy = root.rowVec.y * 0.20 * k
+              ctx.beginPath()
+              ctx.moveTo(root.centerX(root.bandC0, sr) + ox, root.centerY(root.bandC0, sr) + oy)
+              ctx.lineTo(root.centerX(root.bandC1, sr) + ox, root.centerY(root.bandC1, sr) + oy)
+              ctx.stroke()
+            }
+            ctx.restore()
+            // crossing lights (blink while a train is pending / running)
+            if (lane.warn) {
+              var lit = (Math.floor(root.clock * 5) % 2) === 0
+              ctx.save()
+              ctx.fillStyle = lit ? "#ff5f56" : "#5c2020"
+              for (var e = 0; e < 2; e++) {
+                var ec = e === 0 ? 0.1 : root.cols + 0.9
+                var lx = root.centerX(ec, sr), ly = root.centerY(ec, sr)
+                ctx.beginPath()
+                ctx.arc(lx, ly - root.unit * 0.45, root.unit * 0.20, 0, Math.PI * 2)
+                ctx.fill()
+              }
+              ctx.restore()
+            }
+            return
+          }
         }
 
         onPaint: {
@@ -364,88 +848,153 @@ Item {
           ctx.fillStyle = grass
           ctx.fillRect(0, 0, playW, playH)
 
-          var stroke = Qt.rgba(root.ink.r, root.ink.g, root.ink.b, 0.12)
+          // Far lanes (high ar) first so nearer ones overlap them.
+          var keys = Object.keys(root.laneMap)
+          var lanes = []
+          for (var i = 0; i < keys.length; i++) lanes.push(root.laneMap[keys[i]])
+          lanes.sort(function(a, b) { return b.ar - a.ar })
+          for (var j = 0; j < lanes.length; j++) drawLane(ctx, lanes[j])
 
-          // Grass diamonds (skip road rows — those are continuous bands)
-          for (var r = 1; r <= rows; r++) {
-            if (r === roadRow1 || r === roadRow2)
-              continue
-            for (var c = 1; c <= cols; c++) {
-              var cx = root.centerX(c, r)
-              var cy = root.centerY(c, r)
-              // Diamond size scales with fit roughly via tileW/H; keep readable.
-              drawDiamond(ctx, cx, cy, tileW * 0.55, tileH * 0.55, grass, stroke)
-            }
-          }
-
-          // Two-lane road as continuous parallelogram strips (Crossy-like)
-          drawRoadBand(ctx, roadRow1, road)
-          drawRoadBand(ctx, roadRow2, road)
-
-          // Subtle seam between the two road rows
-          ctx.save()
-          ctx.strokeStyle = Qt.rgba(root.ink.r, root.ink.g, root.ink.b, 0.18)
-          ctx.lineWidth = 1
-          ctx.beginPath()
-          var seamRow = (roadRow1 + roadRow2) / 2
-          ctx.moveTo(root.centerX(0.2, seamRow), root.centerY(0.2, seamRow))
-          ctx.lineTo(root.centerX(cols + 0.8, seamRow), root.centerY(cols + 0.8, seamRow))
-          ctx.stroke()
-          ctx.restore()
-
-          // Road center dashed line along the isometric road diagonal
-          // (between roadRow1 / roadRow2, left → right of the lane strip)
-          ctx.save()
-          ctx.strokeStyle = roadMark
-          ctx.lineWidth = 2
-          ctx.setLineDash([14, 12])
-          ctx.beginPath()
-          var midRow = (roadRow1 + roadRow2) / 2
-          ctx.moveTo(root.centerX(0.0, midRow), root.centerY(0.0, midRow))
-          ctx.lineTo(root.centerX(cols + 1.0, midRow), root.centerY(cols + 1.0, midRow))
-          ctx.stroke()
-          ctx.setLineDash([])
-          ctx.restore()
-
-          // (ANGLE/ROT HUD is drawn upright on gameFrame, not in the rotated world)
+          // (ANGLE/ROT/SCORE HUD is drawn upright on gameFrame, not in the world)
         }
       }
 
+      // Trees / boulders (upright, spun with ROT like the baked sprites)
       Repeater {
-        model: root.cars.length
+        model: root.flatProps.length
         Item {
           required property int index
-          property var car: root.cars[index]
+          property var prop: root.flatProps[index] || { ar: 0, col: 1, kind: "tree" }
+          property real sr: root.screenRowF(prop.ar)
+          visible: root.flatProps[index] !== undefined
+          x: root.centerX(prop.col, sr) - width / 2
+          y: root.centerY(prop.col, sr) - height * 0.78
+          width: root.propW
+          height: root.propH
+          z: root.zFor(prop.ar, -0.02)
+          rotation: root.viewRotationDeg
+          transformOrigin: Item.Bottom
+
+          Canvas {
+            anchors.fill: parent
+            visible: prop.kind === "tree"
+            onPaint: {
+              var ctx = getContext("2d")
+              var w = width, h = height
+              ctx.reset()
+              ctx.fillStyle = root.trunkBrown
+              ctx.fillRect(w * 0.42, h * 0.58, w * 0.16, h * 0.42)
+              ctx.fillStyle = root.treeDark
+              ctx.beginPath()
+              ctx.moveTo(w * 0.5, h * 0.24)
+              ctx.lineTo(w * 0.96, h * 0.80)
+              ctx.lineTo(w * 0.04, h * 0.80)
+              ctx.closePath()
+              ctx.fill()
+              ctx.fillStyle = root.treeGreen
+              ctx.beginPath()
+              ctx.moveTo(w * 0.5, h * 0.02)
+              ctx.lineTo(w * 0.86, h * 0.52)
+              ctx.lineTo(w * 0.14, h * 0.52)
+              ctx.closePath()
+              ctx.fill()
+            }
+          }
+
+          Rectangle {
+            anchors.fill: parent
+            visible: prop.kind === "boulder"
+            radius: width * 0.45
+            color: root.rockGray
+            border.color: root.rockDark
+            border.width: 2
+          }
+        }
+      }
+
+      // Logs (river platforms) — rideable, drawn under the chick
+      Repeater {
+        model: root.flatLogs.length
+        Item {
+          required property int index
+          property var log: root.flatLogs[index] || { t: 0, ar: 0, len: 2, dir: 1, speed: 0, kind: "log" }
+          property real sr: root.screenRowF(log.ar)
+          visible: root.flatLogs[index] !== undefined
+          x: { root.frame; return root.centerX(log.t, sr) - width / 2 }
+          y: { root.frame; return root.centerY(log.t, sr) - height / 2 }
+          width: root.unit * log.len * 0.95
+          height: root.unit * 0.62
+          z: 2 + sr * 0.1
+          rotation: root.viewRotationDeg + root.isoAngleDeg
+          transformOrigin: Item.Center
+
+          Rectangle {
+            anchors.fill: parent
+            radius: height / 2
+            color: root.logBrown
+            border.color: root.logEdge
+            border.width: 2
+          }
+        }
+      }
+
+      // Cars + trains
+      Repeater {
+        model: root.flatTraffic.length
+        Item {
+          required property int index
+          property var veh: root.flatTraffic[index] || { t: 0, ar: 0, len: 1.8, dir: 1, speed: 0, kind: "car", image: "assets/baked/bacon/orange-e.png" }
+          property real sr: root.screenRowF(veh.ar)
+          visible: root.flatTraffic[index] !== undefined
           // Sprites are baked for ROT 0°; spin them with viewRotationDeg so noses
           // stay aligned with the road when ROT is nonzero (e.g. -26°).
-          x: { root.frame; return root.carScreenX(car) - car.w / 2 }
-          y: { root.frame; return root.carScreenY(car) - car.h / 2 - 6 }
-          width: car.w
-          height: car.h
-          z: { root.frame; return 3 + (car.lane === 2 ? 0.5 : 0) + car.t / 200 }
+          x: { root.frame; return root.centerX(veh.t, sr) - width / 2 }
+          y: { root.frame; return root.centerY(veh.t, sr) - height * 0.70 }
+          width: veh.kind === "train" ? root.unit * veh.len * 0.95 : root.carW
+          height: veh.kind === "train" ? root.unit * 0.95 : root.carH
+          z: root.zFor(veh.ar, 0.02) + veh.t / 500
           rotation: root.viewRotationDeg
           transformOrigin: Item.Center
 
           Image {
             anchors.fill: parent
-            source: Qt.resolvedUrl(car.image)
+            visible: veh.kind === "car"
+            source: veh.kind === "car" ? Qt.resolvedUrl(veh.image) : ""
             smooth: false
             fillMode: Image.PreserveAspectFit
+          }
+
+          Rectangle {
+            anchors.fill: parent
+            visible: veh.kind === "train"
+            radius: root.unit * 0.18
+            color: "#3b4252"
+            border.color: "#22262f"
+            border.width: 2
+
+            Rectangle {
+              anchors.left: parent.left
+              anchors.right: parent.right
+              anchors.verticalCenter: parent.verticalCenter
+              height: Math.max(2, parent.height * 0.12)
+              color: root.accent
+            }
           }
         }
       }
 
       Image {
         id: chick
-        x: root.centerX(chickCol, chickRow) - 40
-        y: root.centerY(chickCol, chickRow) - 56 - hopZ
-        width: 80
-        height: 80
-        source: Qt.resolvedUrl("assets/baked/bacon/chicken-ne.png")
+        x: root.centerX(root.visCol, root.screenRowF(root.visAr)) - width / 2
+        y: root.centerY(root.visCol, root.screenRowF(root.visAr)) - height * 0.70 - root.hopZ
+        width: root.chickW
+        height: root.chickH
+        source: Qt.resolvedUrl("assets/baked/bacon/chicken-" + root.chickFacing + ".png")
         smooth: false
-        z: 4
+        scale: root.chickSquash
+        transformOrigin: Item.Bottom
+        z: root.zFor(root.visAr, 0.05)
         rotation: root.viewRotationDeg
-        transformOrigin: Item.Center
       }
 
       // Upright HUD (does not spin with ROT)
@@ -458,14 +1007,14 @@ Item {
         Text {
           text: "ANGLE  " + root.angleLabel()
           color: accent
-          font.pixelSize: 22
+          font.pixelSize: 20
           font.bold: true
           font.family: "monospace"
         }
         Text {
           text: "ROT    " + root.rotationLabel()
           color: accent
-          font.pixelSize: 22
+          font.pixelSize: 20
           font.bold: true
           font.family: "monospace"
         }
@@ -473,6 +1022,30 @@ Item {
           text: "[ ] angle  ; ' rot  - = size  ESC close"
           color: ink
           font.pixelSize: 12
+          font.family: "monospace"
+        }
+      }
+
+      Column {
+        anchors.right: parent.right
+        anchors.top: parent.top
+        anchors.margins: 14
+        spacing: 2
+        z: 20
+        Text {
+          anchors.right: parent.right
+          text: "SCORE  " + root.score
+          color: ink
+          font.pixelSize: 30
+          font.bold: true
+          font.family: "monospace"
+        }
+        Text {
+          anchors.right: parent.right
+          text: "BEST   " + root.best
+          color: hush
+          font.pixelSize: 16
+          font.bold: true
           font.family: "monospace"
         }
       }
@@ -489,24 +1062,99 @@ Item {
         font.family: "monospace"
       }
 
-      NumberAnimation {
+      // Game over
+      Rectangle {
+        anchors.centerIn: parent
+        width: 340
+        height: 168
+        radius: 6
+        z: 60
+        visible: root.gameOver
+        color: Qt.rgba(root.night.r, root.night.g, root.night.b, 0.90)
+        border.color: root.accent
+        border.width: 2
+
+        Column {
+          anchors.centerIn: parent
+          spacing: 8
+          Text {
+            anchors.horizontalCenter: parent.horizontalCenter
+            text: "GAME OVER"
+            color: root.ink
+            font.pixelSize: 34
+            font.bold: true
+            font.family: "monospace"
+          }
+          Text {
+            anchors.horizontalCenter: parent.horizontalCenter
+            text: root.deathCause === "water" ? "GLUB GLUB"
+                : root.deathCause === "train" ? "SPLAT"
+                : "SQUISH"
+            color: root.accent
+            font.pixelSize: 16
+            font.family: "monospace"
+          }
+          Text {
+            anchors.horizontalCenter: parent.horizontalCenter
+            text: "SCORE " + root.score + "   BEST " + root.best
+            color: root.ink
+            font.pixelSize: 18
+            font.bold: true
+            font.family: "monospace"
+          }
+          Text {
+            anchors.horizontalCenter: parent.horizontalCenter
+            text: "SPACE / ENTER / R  RESTART"
+            color: root.hush
+            font.pixelSize: 14
+            font.family: "monospace"
+          }
+        }
+      }
+
+      ParallelAnimation {
         id: hopAnim
+        NumberAnimation {
+          id: hopCol
+          target: root
+          property: "visCol"
+          duration: 165
+          easing.type: Easing.OutQuad
+        }
+        NumberAnimation {
+          id: hopRow
+          target: root
+          property: "visAr"
+          duration: 165
+          easing.type: Easing.OutQuad
+        }
+        SequentialAnimation {
+          NumberAnimation { target: root; property: "hopZ"; to: 20; duration: 85; easing.type: Easing.OutQuad }
+          NumberAnimation { target: root; property: "hopZ"; to: 0; duration: 85; easing.type: Easing.InQuad }
+        }
+      }
+
+      SequentialAnimation {
+        id: bumpAnim
+        NumberAnimation { target: root; property: "hopZ"; to: 5; duration: 70; easing.type: Easing.OutQuad }
+        NumberAnimation { target: root; property: "hopZ"; to: 0; duration: 70; easing.type: Easing.InQuad }
+      }
+
+      NumberAnimation {
+        id: scrollAnim
         target: root
-        property: "hopZ"
-        from: 0
-        to: 16
+        property: "winAnchor"
+        duration: 165
+        easing.type: Easing.OutQuad
+      }
+
+      NumberAnimation {
+        id: squashAnim
+        target: root
+        property: "chickSquash"
+        to: 0.45
         duration: 120
         easing.type: Easing.OutQuad
-        onFinished: reverseAnim.start()
-      }
-      NumberAnimation {
-        id: reverseAnim
-        target: root
-        property: "hopZ"
-        from: 16
-        to: 0
-        duration: 120
-        easing.type: Easing.InQuad
       }
 
       Item {
@@ -524,10 +1172,18 @@ Item {
           else if (event.key === Qt.Key_Apostrophe) root.nudgeRotation(1)
           else if (event.key === Qt.Key_Minus || event.key === Qt.Key_Underscore) root.nudgeView(-0.05)
           else if (event.key === Qt.Key_Equal || event.key === Qt.Key_Plus) root.nudgeView(0.05)
+          else if (event.key === Qt.Key_Space || event.key === Qt.Key_Enter || event.key === Qt.Key_Return) {
+            if (root.gameOver && root.overClock > 0.4) root.resetGame()
+            else return
+          }
+          else if (event.key === Qt.Key_R) {
+            if (root.gameOver && root.overClock > 0.4) root.resetGame()
+            else return
+          }
           else if (event.key === Qt.Key_Left || event.key === Qt.Key_A) root.moveChick(-1, 0)
           else if (event.key === Qt.Key_Right || event.key === Qt.Key_D) root.moveChick(1, 0)
-          else if (event.key === Qt.Key_Up || event.key === Qt.Key_W) root.moveChick(0, -1)
-          else if (event.key === Qt.Key_Down || event.key === Qt.Key_S) root.moveChick(0, 1)
+          else if (event.key === Qt.Key_Up || event.key === Qt.Key_W) root.moveChick(0, 1)
+          else if (event.key === Qt.Key_Down || event.key === Qt.Key_S) root.moveChick(0, -1)
           else return
           event.accepted = true
         }

@@ -46,6 +46,14 @@ purposes, without asking permission.
 The vehicle GLBs include separate wheel models (`wheel-default.glb`) so the
 wheels can be animated independently in a future 3D version.
 
+Engine-drawn art
+----------------
+
+Trees, boulders, logs, trains, water bands, rails, sleepers and crossing
+lights are drawn with Qt Quick Canvas / Rectangle primitives tinted from the
+Omarchy theme. They are original to this plugin (MIT) and are not derived from
+any third-party model — no Crossy Road or Hipster Whale assets are used.
+
 Plugin code
 -----------
 

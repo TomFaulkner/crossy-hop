@@ -1,13 +1,40 @@
 # Crossy Hop
 
-A tiny isometric Crossy Road-ish overlay demo as a native
+An isometric Crossy Road-ish overlay game as a native
 [Omarchy](https://omarchy.org/) shell plugin.
 
-It runs inside the long-lived `omarchy-shell` Quickshell process. Click the
-bar icon to open a fullscreen overlay: grass, a two-lane road, cars crossing
-in both directions, and an Evan Bacon MagicaVoxel chick you can hop with arrows / WASD.
+It runs inside the long-lived `omarchy-shell` Quickshell process. Click the bar
+icon to open a fullscreen overlay: an endless isometric world of grass, roads,
+rivers and railroads. Hop the Evan Bacon MagicaVoxel chick forward with
+arrows / WASD — every new row you reach is a point. Cars squash you, water
+drowns you, trains splat you.
 
-This is a proof-of-concept, not a full game.
+## Gameplay loop
+
+- **Score** — one point per row of forward progress (furthest row reached, so
+  you cannot farm points by hopping back and forth). `BEST` keeps the best run
+  of the session.
+- **Endless lanes** — a sliding window of ~9 rows is generated ahead of you as
+  you advance. Lane types:
+  - **grass** — safe; some cells hold trees / boulders that block your hop
+  - **road** — Bacon cars (orange / blue / green) in both directions; contact = death
+  - **river** — you drown unless you land on a log; logs carry you sideways
+  - **railroad** — infrequent, fast train; crossing lights blink ~2s before it arrives
+- **Scrolling** — hop past the middle of the board and the whole world slides
+  down so the chick stays in the bottom third.
+- **Game over** — traffic freezes for half a second, then a `GAME OVER` card
+  shows the score. Restart with `Space` / `Enter` / `R` (or just hop again).
+
+## Controls
+
+- Arrow keys or `W`/`A`/`S`/`D`: hop — up/down across the road, left/right along it
+- `Space` / `Enter` / `R`: restart after a game over
+- Defaults (Crossy-like dimetric, not true isometric): **ANGLE 40°**, **ROT −26°** (user-matched). Fine-tune still live via hotkeys.
+- `[` / `]`: nudge road **angle** (steepness) ±0.5° — HUD `ANGLE`
+- `;` / `'`: nudge whole-scene **rotation** ±1° — HUD `ROT`
+- `-` / `=`: shrink / grow the game window (desktop stays visible around it)
+- `M`: mute toggle (reserved; no SFX yet)
+- `Esc`: close
 
 ## Install
 
@@ -27,22 +54,28 @@ omarchy-shell shell toggle io.github.tomfaulkner.crossy-hop
 
 After QML edits: `omarchy restart shell`.
 
-## Controls
+## How it works
 
-- Arrow keys or `W`/`A`/`S`/`D`: hop — up/down across the road, left/right along it
-Defaults (Crossy-like dimetric, not true isometric): **ANGLE 40°**, **ROT −26°** (user-matched). Fine-tune still live via hotkeys.
-
-- `[` / `]`: nudge road **angle** (steepness) ±0.5° — HUD `ANGLE`
-- `;` / `'`: nudge whole-scene **rotation** ±1° — HUD `ROT`
-- `-` / `=`: shrink / grow the game window (desktop stays visible around it)
-- `M`: mute toggle (reserved; no SFX yet)
-- `Esc`: close
+- `CrossyHop.qml` — the whole game: iso projection (ANGLE/ROT baked in and
+  centre-fitted into the upright play card), lane generation, a 16 ms `Timer`
+  driving `step(dt)`, Canvas lane painting (grass diamonds, road bands with
+  dashed centre lines, water, rails + sleepers + crossing lights) and QML
+  `Repeater`s for sprites (Bacon cars / trains) and Canvas props (trees,
+  boulders) and logs.
+- World coordinates: absolute row `ar` grows as you advance;
+  `screenRow(ar) = rows - (ar - winAnchor)`. `winAnchor` is a real number so a
+  forward hop can animate the world scroll.
+- Lane generation keeps hazards separated by at least one safe grass row and
+  never walls off a whole row with obstacles.
 
 ## Assets
 
 - **Gameplay sprites (active):** `assets/baked/bacon/*` — upright dimetric PNGs baked from
-  Evan Bacon MagicaVoxel OBJs (`tools/bake_bacon_blender.py`). Chicken NE; cars SE/NW
+  Evan Bacon MagicaVoxel OBJs (`tools/bake_bacon_blender.py`). Chicken NE/SW; cars SE/NW
   (`orange`/`blue`/`green`). No horizontal flip at draw time.
+- **Drawn in-engine (no third-party art):** trees, boulders, logs, trains,
+  water, rails and crossing lights are Canvas / `Rectangle` primitives tinted
+  from the Omarchy theme.
 - **Source models:** `assets/bacon/{chicken,orange_car,blue_car,green_car}/` — `0.obj` + `0.png`
   from [Expo-Crossy-Road](https://github.com/EvanBacon/Expo-Crossy-Road) (MIT), plus local
   `.mtl` stubs so Blender can bind textures. See `assets/bacon/NOTICE`.
@@ -64,6 +97,15 @@ blender --background --python tools/bake_blender.py -- --size 512 --out-height 9
 ```
 
 - **Legacy soft rasterizer** (often shards): `tools/bake_sprites.py`
+
+## TODO
+
+- Sound effects (the `M` mute toggle is wired but silent), maybe a hop blip and
+  a squish.
+- Eagle / edge-of-world pressure when you dawdle (Crossy's anti-camping rule).
+- Chicken skins + coin pickups.
+- Persist `BEST` across sessions.
+- Baked MagicaVoxel tree / log / train sprites instead of Canvas primitives.
 
 ## License
 
