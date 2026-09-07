@@ -14,6 +14,7 @@ Copied into this tree as:
   - assets/bacon/orange_car/0.obj + 0.png
   - assets/bacon/blue_car/0.obj + 0.png
   - assets/bacon/green_car/0.obj + 0.png
+  - assets/bacon/train/{front,middle,back}/0.obj + 0.png
 
 Copyright (c) 2016-present Evan Bacon. Source code of that project is MIT.
 His README states the project is strictly for educational purposes and uses
@@ -24,7 +25,8 @@ Local `.mtl` files under `assets/bacon/*/` were added here so Blender can bind
 `map_Kd` to `0.png` (upstream loads the texture in application code). Do not
 add symlinks under the plugin tree — Omarchy rejects them.
 
-Baked outputs: `assets/baked/bacon/*.png` via `tools/bake_bacon_blender.py`.
+Baked outputs: `assets/baked/bacon/*.png` via `tools/bake_bacon_blender.py`
+(cars/chicken) and `tools/bake_bacon_train.py` (composed front+middle+back train).
 
 Kenney (CC0; unused / fallback)
 -------------------------------
@@ -49,10 +51,10 @@ wheels can be animated independently in a future 3D version.
 Engine-drawn art
 ----------------
 
-Trees, boulders, logs, trains, water bands, rails, sleepers and crossing
-lights are drawn with Qt Quick Canvas / Rectangle primitives tinted from the
-Omarchy theme. They are original to this plugin (MIT) and are not derived from
-any third-party model — no Crossy Road or Hipster Whale assets are used.
+Trees, boulders, logs, water bands, rails, sleepers and crossing lights are
+drawn with Qt Quick Canvas / Rectangle primitives tinted from the Omarchy
+theme. They are original to this plugin (MIT). Trains use baked Bacon MagicaVoxel
+sprites (see above). No Crossy Road or Hipster Whale assets are used.
 
 Plugin code
 -----------

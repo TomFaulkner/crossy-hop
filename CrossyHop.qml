@@ -163,6 +163,10 @@ Item {
   readonly property real unit: Math.sqrt(colVec.x * colVec.x + colVec.y * colVec.y)
   readonly property real carH: unit * 1.80
   readonly property real carW: carH * 1.15
+  // Bacon train bake is ~101x96 (near-square AABB of a diagonal long sprite).
+  // Size so the diagonal ≈ lane length (~len*0.95 units).
+  readonly property real trainH: unit * 2.85
+  readonly property real trainW: trainH * 1.05
   readonly property real chickH: unit * 1.85
   readonly property real chickW: chickH * 0.63
   readonly property real propW: unit * 1.00
@@ -384,7 +388,7 @@ Item {
       len: len,
       dir: lane.dir,
       speed: lane.speed,
-      image: ""
+      image: "assets/baked/bacon/train-" + (lane.dir === 1 ? "e" : "w") + ".png"
     })
   }
 
@@ -1049,41 +1053,20 @@ Item {
           // stay aligned with the road when ROT is nonzero (e.g. -26°).
           x: { root.frame; return root.centerX(veh.t, sr) - width / 2 }
           y: { root.frame; return root.centerY(veh.t, sr) - height * 0.70 }
-          width: veh.kind === "train" ? root.unit * veh.len * 0.95 : root.carW
-          height: veh.kind === "train" ? root.unit * 0.52 : root.carH
+          width: veh.kind === "train" ? root.trainW : root.carW
+          height: veh.kind === "train" ? root.trainH : root.carH
           z: root.zFor(veh.ar, 0.02) + veh.t / 500
-          // Cars: baked sprites + viewRotationDeg. Trains: long axis = lane travel.
-          rotation: {
-            root.frame
-            return veh.kind === "train"
-              ? root.laneTravelDeg(veh.ar)
-              : root.viewRotationDeg
-          }
+          // Baked Bacon sprites (cars + trains) use viewRotationDeg — same facing
+          // convention (dir=+1 → e, dir=-1 → w). hitHalf / travel motion unchanged.
+          rotation: root.viewRotationDeg
           transformOrigin: Item.Center
 
           Image {
             anchors.fill: parent
-            visible: veh.kind === "car"
-            source: veh.kind === "car" ? Qt.resolvedUrl(veh.image) : ""
+            visible: veh.kind === "car" || veh.kind === "train"
+            source: (veh.kind === "car" || veh.kind === "train") ? Qt.resolvedUrl(veh.image) : ""
             smooth: false
             fillMode: Image.PreserveAspectFit
-          }
-
-          Rectangle {
-            anchors.fill: parent
-            visible: veh.kind === "train"
-            radius: height * 0.35
-            color: "#3b4252"
-            border.color: "#22262f"
-            border.width: 2
-
-            Rectangle {
-              anchors.left: parent.left
-              anchors.right: parent.right
-              anchors.verticalCenter: parent.verticalCenter
-              height: Math.max(2, parent.height * 0.18)
-              color: root.accent
-            }
           }
         }
       }

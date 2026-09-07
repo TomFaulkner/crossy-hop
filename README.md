@@ -77,12 +77,13 @@ After QML edits: `omarchy restart shell`.
 ## Assets
 
 - **Gameplay sprites (active):** `assets/baked/bacon/*` — upright dimetric PNGs baked from
-  Evan Bacon MagicaVoxel OBJs (`tools/bake_bacon_blender.py`). Chicken NE/SW; cars SE/NW
+  Evan Bacon MagicaVoxel OBJs (`tools/bake_bacon_blender.py`, `tools/bake_bacon_train.py`).
+  Chicken NE/SW; cars + trains SE/NW
   (`orange`/`blue`/`green`). No horizontal flip at draw time.
-- **Drawn in-engine (no third-party art):** trees, boulders, logs, trains,
+- **Drawn in-engine (no third-party art):** trees, boulders, logs,
   water, rails and crossing lights are Canvas / `Rectangle` primitives tinted
   from the Omarchy theme.
-- **Source models:** `assets/bacon/{chicken,orange_car,blue_car,green_car}/` — `0.obj` + `0.png`
+- **Source models:** `assets/bacon/{chicken,orange_car,blue_car,green_car,train/{front,middle,back}}/` — `0.obj` + `0.png`
   from [Expo-Crossy-Road](https://github.com/EvanBacon/Expo-Crossy-Road) (MIT), plus local
   `.mtl` stubs so Blender can bind textures. See `assets/bacon/NOTICE`.
 - **Kenney (unused / fallback):** `assets/kenney/*.glb`, `assets/baked/{sedan,race,chick}-*.png`,
@@ -111,7 +112,7 @@ blender --background --python tools/bake_blender.py -- --size 512 --out-height 9
 - Eagle / edge-of-world pressure when you dawdle (Crossy's anti-camping rule).
 - Chicken skins + coin pickups.
 - Persist `BEST` across sessions.
-- Baked MagicaVoxel tree / log / train sprites instead of Canvas primitives.
+- Baked MagicaVoxel tree / log sprites instead of Canvas primitives (trains done).
 
 ## License
 

@@ -3,7 +3,7 @@ Evan Bacon MagicaVoxel models
 
 Source: https://github.com/EvanBacon/Expo-Crossy-Road
   assets/models/characters/chicken/
-  assets/models/vehicles/{orange_car,blue_car,green_car}/
+  assets/models/vehicles/{orange_car,blue_car,green_car,train/{front,middle,back}}/
 
 Copyright (c) 2016-present Evan Bacon.
 Licensed under the MIT License (see that repo's LICENSE).
