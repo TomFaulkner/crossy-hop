@@ -547,10 +547,12 @@ Item {
       checkChick(dt)
       if (dying) needPaint = true
     }
-    // Positions bind to `frame`. Full Canvas paints are expensive — cap ~8fps.
+    // Traffic/logs/props are Canvas-only (no per-item frame bindings).
     frame++
     paintAcc += dt
-    if (needPaint || paintAcc >= 0.12 || hopAnim.running || scrollAnim.running) {
+    var moving = flatTraffic.length > 0 || flatLogs.length > 0
+    var paintHz = moving ? 0.066 : 0.15
+    if (needPaint || paintAcc >= paintHz || hopAnim.running || scrollAnim.running) {
       paintAcc = 0
       playfield.requestPaint()
     }
@@ -595,6 +597,9 @@ Item {
       "over=" + (gameOver ? 1 : 0)
     ].join(" ")
     console.warn("[crossy-hop]", line)
+    // Never pile Process restarts — overlapping shells have crashed QS before.
+    if (hopLogProc.running)
+      return
     hopLogProc.command = [
       "sh", "-c",
       "mkdir -p \"$1\" && printf '%s\n' \"$2\" >> \"$3\"",
@@ -603,7 +608,6 @@ Item {
       line,
       debugLogPath
     ]
-    hopLogProc.running = false
     hopLogProc.running = true
   }
 
@@ -866,9 +870,6 @@ Item {
           if (lane.type === "grass") {
             var alt = (Math.abs(lane.ar) % 2 === 0) ? root.grass : Qt.darker(root.grass, 1.10)
             drawBand(ctx, lane, alt)
-            var stroke = Qt.rgba(root.ink.r, root.ink.g, root.ink.b, 0.10)
-            for (var c = root.tileC0; c <= root.tileC1; c++)
-              drawCell(ctx, c, sr, 0.94, 0.94, null, stroke)
             return
           }
 
@@ -915,7 +916,7 @@ Item {
             ctx.save()
             ctx.strokeStyle = Qt.darker(root.railBed, 1.35)
             ctx.lineWidth = Math.max(1, root.unit * 0.10)
-            for (var s = -4; s < root.cols + 5; s += 0.5) {
+            for (var s = -2; s < root.cols + 3; s += 1.0) {
               var sx = root.colVec.x * 0.18, sy = root.colVec.y * 0.18
               var px = root.centerX(s, sr), py = root.centerY(s, sr)
               ctx.beginPath()
@@ -988,6 +989,65 @@ Item {
           ctx.restore()
         }
 
+        function spriteFor(path) {
+          if (!path) return null
+          if (path.indexOf("train-e") >= 0) return sprTrainE
+          if (path.indexOf("train-w") >= 0) return sprTrainW
+          if (path.indexOf("orange-e") >= 0) return sprOrangeE
+          if (path.indexOf("orange-w") >= 0) return sprOrangeW
+          if (path.indexOf("blue-e") >= 0) return sprBlueE
+          if (path.indexOf("blue-w") >= 0) return sprBlueW
+          if (path.indexOf("green-e") >= 0) return sprGreenE
+          if (path.indexOf("green-w") >= 0) return sprGreenW
+          return null
+        }
+
+        function drawSprite(ctx, img, cx, cy, w, h, deg, yAnchor) {
+          if (!img || img.status !== Image.Ready) return
+          ctx.save()
+          ctx.translate(cx, cy)
+          ctx.rotate(deg * Math.PI / 180)
+          ctx.drawImage(img, -w / 2, -h * yAnchor, w, h)
+          ctx.restore()
+        }
+
+        function drawLogAt(ctx, log) {
+          var sr = root.screenRowF(log.ar)
+          if (sr < -2 || sr > root.rows + 2) return
+          var cx = root.centerX(log.t, sr)
+          var cy = root.centerY(log.t, sr)
+          var w = root.unit * log.len * 0.95
+          var h = root.unit * 0.50
+          var deg = root.laneTravelDeg(log.ar) * Math.PI / 180
+          ctx.save()
+          ctx.translate(cx, cy)
+          ctx.rotate(deg)
+          var r = h / 2
+          ctx.beginPath()
+          // rounded capsule
+          ctx.moveTo(-w / 2 + r, -h / 2)
+          ctx.lineTo(w / 2 - r, -h / 2)
+          ctx.arc(w / 2 - r, 0, r, -Math.PI / 2, Math.PI / 2)
+          ctx.lineTo(-w / 2 + r, h / 2)
+          ctx.arc(-w / 2 + r, 0, r, Math.PI / 2, -Math.PI / 2)
+          ctx.closePath()
+          ctx.fillStyle = root.logBrown
+          ctx.fill()
+          ctx.strokeStyle = root.logEdge
+          ctx.lineWidth = 2
+          ctx.stroke()
+          ctx.restore()
+        }
+
+        function drawVehAt(ctx, veh) {
+          var sr = root.screenRowF(veh.ar)
+          if (sr < -2 || sr > root.rows + 2) return
+          var cx = root.centerX(veh.t, sr)
+          var cy = root.centerY(veh.t, sr)
+          var w = veh.kind === "train" ? root.trainW : root.carW
+          var h = veh.kind === "train" ? root.trainH : root.carH
+          drawSprite(ctx, spriteFor(veh.image), cx, cy, w, h, root.viewRotationDeg, 0.70)
+        }
 
         onPaint: {
           var ctx = getContext("2d")
@@ -1003,7 +1063,7 @@ Item {
           lanes.sort(function(a, b) { return b.ar - a.ar })
           for (var j = 0; j < lanes.length; j++) drawLane(ctx, lanes[j])
 
-          // Props + logs on one Canvas (avoids per-item Canvas/Rectangle thrash).
+          // Props / logs / cars / trains — all Canvas (no Repeater thrash).
           var props = root.flatProps
           for (var pi = 0; pi < props.length; pi++) {
             var prop = props[pi]
@@ -1013,64 +1073,31 @@ Item {
             if (prop.kind === "boulder") drawBoulderAt(ctx, pcx, pcy)
             else drawTreeAt(ctx, pcx, pcy)
           }
+
+          var logs = root.flatLogs
+          for (var li = 0; li < logs.length; li++)
+            drawLogAt(ctx, logs[li])
+
+          var cars = root.flatTraffic
+          for (var vi = 0; vi < cars.length; vi++)
+            drawVehAt(ctx, cars[vi])
         }
       }
 
-      // Logs — lightweight Rectangles (no per-item Canvas)
-      Repeater {
-        model: root.flatLogs.length
-        Item {
-          required property int index
-          property var log: root.flatLogs[index] || { t: 0, ar: 0, len: 2, dir: 1, speed: 0, kind: "log" }
-          property real sr: root.screenRowF(log.ar)
-          visible: root.flatLogs[index] !== undefined
-          x: { root.frame; return root.centerX(log.t, sr) - width / 2 }
-          y: { root.frame; return root.centerY(log.t, sr) - height / 2 }
-          width: root.unit * log.len * 0.95
-          height: root.unit * 0.50
-          z: 2 + sr * 0.1
-          rotation: { root.frame; return root.laneTravelDeg(log.ar) }
-          transformOrigin: Item.Center
-          Rectangle {
-            anchors.fill: parent
-            radius: height / 2
-            color: root.logBrown
-            border.color: root.logEdge
-            border.width: 2
-          }
-        }
-      }
-
-      // Cars + trains
-      Repeater {
-        model: root.flatTraffic.length
-        Item {
-          required property int index
-          property var veh: root.flatTraffic[index] || { t: 0, ar: 0, len: 1.8, dir: 1, speed: 0, kind: "car", image: "assets/baked/bacon/orange-e.png" }
-          property real sr: root.screenRowF(veh.ar)
-          visible: root.flatTraffic[index] !== undefined
-          // Sprites are baked for ROT 0°; spin them with viewRotationDeg so noses
-          // stay aligned with the road when ROT is nonzero (e.g. -26°).
-          x: { root.frame; return root.centerX(veh.t, sr) - width / 2 }
-          y: { root.frame; return root.centerY(veh.t, sr) - height * 0.70 }
-          width: veh.kind === "train" ? root.trainW : root.carW
-          height: veh.kind === "train" ? root.trainH : root.carH
-          z: root.zFor(veh.ar, 0.02) + veh.t / 500
-          // Baked Bacon sprites (cars + trains) use viewRotationDeg — same facing
-          // convention (dir=+1 → e, dir=-1 → w). hitHalf / travel motion unchanged.
-          rotation: root.viewRotationDeg
-          transformOrigin: Item.Center
-
-          Image {
-            anchors.fill: parent
-            visible: veh.kind === "car" || veh.kind === "train"
-            source: (veh.kind === "car" || veh.kind === "train") ? Qt.resolvedUrl(veh.image) : ""
-            smooth: false
-            asynchronous: true
-            cache: true
-            fillMode: Image.PreserveAspectFit
-          }
-        }
+      // Hidden sprite atlas for Canvas.drawImage (cars + trains).
+      Item {
+        id: spriteBank
+        visible: false
+        width: 1
+        height: 1
+        Image { id: sprOrangeE; source: Qt.resolvedUrl("assets/baked/bacon/orange-e.png"); asynchronous: true; cache: true; smooth: false }
+        Image { id: sprOrangeW; source: Qt.resolvedUrl("assets/baked/bacon/orange-w.png"); asynchronous: true; cache: true; smooth: false }
+        Image { id: sprBlueE; source: Qt.resolvedUrl("assets/baked/bacon/blue-e.png"); asynchronous: true; cache: true; smooth: false }
+        Image { id: sprBlueW; source: Qt.resolvedUrl("assets/baked/bacon/blue-w.png"); asynchronous: true; cache: true; smooth: false }
+        Image { id: sprGreenE; source: Qt.resolvedUrl("assets/baked/bacon/green-e.png"); asynchronous: true; cache: true; smooth: false }
+        Image { id: sprGreenW; source: Qt.resolvedUrl("assets/baked/bacon/green-w.png"); asynchronous: true; cache: true; smooth: false }
+        Image { id: sprTrainE; source: Qt.resolvedUrl("assets/baked/bacon/train-e.png"); asynchronous: true; cache: true; smooth: false }
+        Image { id: sprTrainW; source: Qt.resolvedUrl("assets/baked/bacon/train-w.png"); asynchronous: true; cache: true; smooth: false }
       }
 
       Image {
