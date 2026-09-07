@@ -166,8 +166,9 @@ Item {
   readonly property real carW: carH * 1.15
   // Bacon train bake is ~101x96 (near-square AABB of a diagonal long sprite).
   // Size so the diagonal ≈ lane length (~len*0.95 units).
-  readonly property real trainH: unit * 1.15
-  readonly property real trainW: unit * 4.0
+  // Bacon train bake is ~101x96 (near-square AABB of a diagonal long sprite).
+  readonly property real trainH: unit * 2.85
+  readonly property real trainW: trainH * 1.05
   readonly property real chickH: unit * 1.85
   readonly property real chickW: chickH * 0.63
   readonly property real propW: unit * 1.00
@@ -550,8 +551,9 @@ Item {
     // Traffic/logs/props are Canvas-only (no per-item frame bindings).
     frame++
     paintAcc += dt
+    // Canvas-only scene can take ~30fps now; idle paints stay cheaper.
     var moving = flatTraffic.length > 0 || flatLogs.length > 0
-    var paintHz = moving ? 0.066 : 0.15
+    var paintHz = moving ? 0.033 : 0.12
     if (needPaint || paintAcc >= paintHz || hopAnim.running || scrollAnim.running) {
       paintAcc = 0
       playfield.requestPaint()
@@ -756,7 +758,7 @@ Item {
   }
 
   Timer {
-    interval: 33
+    interval: 16
     repeat: true
     running: root.opened
     onTriggered: {
