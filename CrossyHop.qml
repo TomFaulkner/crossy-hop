@@ -12,6 +12,7 @@ Item {
   property bool opened: false
   property bool muted: false
   property int hopCount: 0
+  property int bootId: 0
 
   // Crash diagnostics — every 2nd hop appends a line here (and console.warn).
   readonly property string homeDir: Quickshell.env("HOME") || ""
@@ -165,17 +166,17 @@ Item {
   readonly property real carW: carH * 1.15
   // Bacon train bake is ~101x96 (near-square AABB of a diagonal long sprite).
   // Size so the diagonal ≈ lane length (~len*0.95 units).
-  readonly property real trainH: unit * 2.85
-  readonly property real trainW: trainH * 1.05
+  readonly property real trainH: unit * 1.15
+  readonly property real trainW: unit * 4.0
   readonly property real chickH: unit * 1.85
   readonly property real chickW: chickH * 0.63
   readonly property real propW: unit * 1.00
   readonly property real propH: unit * 1.70
   // Lane bands / grass tiles run well past the grid so ROT never shows card edges.
-  readonly property int bandC0: -12
-  readonly property int bandC1: cols + 13
-  readonly property int tileC0: -8
-  readonly property int tileC1: cols + 9
+  readonly property int bandC0: -4
+  readonly property int bandC1: cols + 5
+  readonly property int tileC0: -2
+  readonly property int tileC1: cols + 3
 
   function projectLocal(lx, ly) {
     var mid = gridCentroidLocal()
@@ -449,12 +450,12 @@ Item {
       if (lane.type === "road") {
         if (lane.spawnT >= lane.interval) {
           lane.spawnT = 0
-          if (lane.vehicles.length < 5 && spawnVehicle(lane, null)) rosterDirty = true
+          if (lane.vehicles.length < 4 && spawnVehicle(lane, null)) rosterDirty = true
         }
       } else if (lane.type === "river") {
         if (lane.spawnT >= lane.interval) {
           lane.spawnT = 0
-          if (lane.vehicles.length < 4 && spawnLog(lane, null)) rosterDirty = true
+          if (lane.vehicles.length < 3 && spawnLog(lane, null)) rosterDirty = true
         }
       } else if (lane.type === "rail") {
         if (lane.vehicles.length === 0 && lane.spawnT >= lane.interval) {
@@ -546,11 +547,10 @@ Item {
       checkChick(dt)
       if (dying) needPaint = true
     }
-    // Positions bind to `frame`. Logs/trees are Canvas-painted — ~30fps if rivers.
+    // Positions bind to `frame`. Full Canvas paints are expensive — cap ~8fps.
     frame++
     paintAcc += dt
-    var paintHz = (flatLogs.length > 0) ? 0.033 : 0.12
-    if (needPaint || paintAcc >= paintHz || hopAnim.running || scrollAnim.running) {
+    if (needPaint || paintAcc >= 0.12 || hopAnim.running || scrollAnim.running) {
       paintAcc = 0
       playfield.requestPaint()
     }
@@ -590,6 +590,7 @@ Item {
       "flatP=" + flatProps.length,
       "anchor=" + winAnchorTarget,
       "frame=" + frame,
+      "boot=" + bootId,
       "dying=" + (dying ? 1 : 0),
       "over=" + (gameOver ? 1 : 0)
     ].join(" ")
@@ -695,8 +696,10 @@ Item {
   // ---------------------------------------------------------------------------
   function open(payloadJson) {
     opened = true
+    bootId++
     resetGame()
     lastTick = Date.now()
+    debugHopSnapshot("open")
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
     playfield.requestPaint()
   }
@@ -749,7 +752,7 @@ Item {
   }
 
   Timer {
-    interval: 16
+    interval: 33
     repeat: true
     running: root.opened
     onTriggered: {
@@ -985,31 +988,6 @@ Item {
           ctx.restore()
         }
 
-        function drawLogAt(ctx, log) {
-          var sr = root.screenRowF(log.ar)
-          var cx = root.centerX(log.t, sr)
-          var cy = root.centerY(log.t, sr)
-          var ang = root.laneTravelDeg(log.ar) * Math.PI / 180
-          var len = root.unit * log.len * 0.95
-          var thick = root.unit * 0.55
-          var r = thick / 2
-          ctx.save()
-          ctx.translate(cx, cy)
-          ctx.rotate(ang)
-          ctx.beginPath()
-          ctx.moveTo(-len / 2 + r, -r)
-          ctx.lineTo(len / 2 - r, -r)
-          ctx.arc(len / 2 - r, 0, r, -Math.PI / 2, Math.PI / 2)
-          ctx.lineTo(-len / 2 + r, r)
-          ctx.arc(-len / 2 + r, 0, r, Math.PI / 2, -Math.PI / 2)
-          ctx.closePath()
-          ctx.fillStyle = root.logBrown
-          ctx.fill()
-          ctx.strokeStyle = root.logEdge
-          ctx.lineWidth = 2
-          ctx.stroke()
-          ctx.restore()
-        }
 
         onPaint: {
           var ctx = getContext("2d")
@@ -1035,9 +1013,31 @@ Item {
             if (prop.kind === "boulder") drawBoulderAt(ctx, pcx, pcy)
             else drawTreeAt(ctx, pcx, pcy)
           }
-          var logs = root.flatLogs
-          for (var li = 0; li < logs.length; li++)
-            drawLogAt(ctx, logs[li])
+        }
+      }
+
+      // Logs — lightweight Rectangles (no per-item Canvas)
+      Repeater {
+        model: root.flatLogs.length
+        Item {
+          required property int index
+          property var log: root.flatLogs[index] || { t: 0, ar: 0, len: 2, dir: 1, speed: 0, kind: "log" }
+          property real sr: root.screenRowF(log.ar)
+          visible: root.flatLogs[index] !== undefined
+          x: { root.frame; return root.centerX(log.t, sr) - width / 2 }
+          y: { root.frame; return root.centerY(log.t, sr) - height / 2 }
+          width: root.unit * log.len * 0.95
+          height: root.unit * 0.50
+          z: 2 + sr * 0.1
+          rotation: { root.frame; return root.laneTravelDeg(log.ar) }
+          transformOrigin: Item.Center
+          Rectangle {
+            anchors.fill: parent
+            radius: height / 2
+            color: root.logBrown
+            border.color: root.logEdge
+            border.width: 2
+          }
         }
       }
 
@@ -1066,6 +1066,8 @@ Item {
             visible: veh.kind === "car" || veh.kind === "train"
             source: (veh.kind === "car" || veh.kind === "train") ? Qt.resolvedUrl(veh.image) : ""
             smooth: false
+            asynchronous: true
+            cache: true
             fillMode: Image.PreserveAspectFit
           }
         }
