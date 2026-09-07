@@ -32,7 +32,13 @@ drowns you, trains splat you.
 - Defaults (Crossy-like dimetric, not true isometric): **ANGLE 40°**, **ROT −26°** (user-matched). Fine-tune still live via hotkeys.
 - `[` / `]`: nudge road **angle** (steepness) ±0.5° — HUD `ANGLE`
 - `;` / `'`: nudge whole-scene **rotation** ±1° — HUD `ROT`
-- `-` / `=`: shrink / grow the game window (desktop stays visible around it)
+- `-` / `=`: shrink / grow the game window
+
+## Crash debug log
+
+While hunting random Quickshell crashes, every **2nd hop** (plus resets/deaths)
+appends a line to `~/.local/state/crossy-hop/hop-debug.log` (or `$XDG_STATE_HOME/crossy-hop/`).
+Also printed as `console.warn` in the shell log. Paste the last ~20 lines if it dies again. (desktop stays visible around it)
 - `M`: mute toggle (reserved; no SFX yet)
 - `Esc`: close
 

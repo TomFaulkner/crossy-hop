@@ -1,5 +1,6 @@
 import QtQuick
 import Quickshell
+import Quickshell.Io
 import Quickshell.Wayland
 import qs.Commons
 
@@ -10,6 +11,13 @@ Item {
   property var manifest: null
   property bool opened: false
   property bool muted: false
+  property int hopCount: 0
+
+  // Crash diagnostics — every 2nd hop appends a line here (and console.warn).
+  readonly property string homeDir: Quickshell.env("HOME") || ""
+  readonly property string stateHome: Quickshell.env("XDG_STATE_HOME") || (homeDir + "/.local/state")
+  readonly property string debugDir: stateHome + "/crossy-hop"
+  readonly property string debugLogPath: debugDir + "/hop-debug.log"
 
   // Grid / iso — Crossy dimetric defaults (not true iso): pitch 40°, yaw -26° (user-matched).
   // `rows` is the sliding window height: only ~9 rows of the infinite world exist at a time.
@@ -510,9 +518,12 @@ Item {
     deathCause = cause
     deathClock = 0
     squashAnim.start()
+    debugHopSnapshot("die:" + cause)
   }
 
   function step(dt) {
+    try {
+
     clock += dt
     var needPaint = false
     if (dying) {
@@ -539,6 +550,56 @@ Item {
       paintAcc = 0
       playfield.requestPaint()
     }
+  
+    } catch (error) {
+      console.warn("[crossy-hop] step failed", error)
+      try { debugHopSnapshot("step-error") } catch (e2) { console.warn("[crossy-hop] log failed", e2) }
+    }
+  }
+
+
+  function trafficCounts() {
+    var keys = Object.keys(laneMap)
+    var vehN = 0
+    for (var i = 0; i < keys.length; i++) {
+      var lane = laneMap[keys[i]]
+      if (lane && lane.vehicles) vehN += lane.vehicles.length
+    }
+    return { lanes: keys.length, vehs: vehN }
+  }
+
+  function debugHopSnapshot(tag) {
+    var counts = trafficCounts()
+    var lane = laneMap[chickAr]
+    var line = [
+      (new Date()).toISOString(),
+      tag || "hop",
+      "n=" + hopCount,
+      "score=" + score,
+      "ar=" + chickAr,
+      "col=" + Number(chickColF).toFixed(2),
+      "lane=" + (lane ? lane.type : "null"),
+      "lanes=" + counts.lanes,
+      "vehs=" + counts.vehs,
+      "flatT=" + flatTraffic.length,
+      "flatL=" + flatLogs.length,
+      "flatP=" + flatProps.length,
+      "anchor=" + winAnchorTarget,
+      "frame=" + frame,
+      "dying=" + (dying ? 1 : 0),
+      "over=" + (gameOver ? 1 : 0)
+    ].join(" ")
+    console.warn("[crossy-hop]", line)
+    hopLogProc.command = [
+      "sh", "-c",
+      "mkdir -p \"$1\" && printf '%s\n' \"$2\" >> \"$3\"",
+      "sh",
+      debugDir,
+      line,
+      debugLogPath
+    ]
+    hopLogProc.running = false
+    hopLogProc.running = true
   }
 
   // ---------------------------------------------------------------------------
@@ -579,6 +640,10 @@ Item {
     hopRow.to = newAr
     hopAnim.restart()
 
+    hopCount++
+    if (hopCount % 2 === 0)
+      debugHopSnapshot("hop")
+
     // Scroll the world so the chick stays in the bottom third.
     var target = winAnchorTarget
     var s = rows - (chickAr - target)
@@ -594,6 +659,7 @@ Item {
   }
 
   function resetGame() {
+    hopCount = 0
     score = 0
     winAnchorTarget = 0
     winAnchor = 0
@@ -617,6 +683,7 @@ Item {
     ensureLanes(rows + 2)
     refreshView()
     playfield.requestPaint()
+    debugHopSnapshot("reset")
   }
 
   // ---------------------------------------------------------------------------
@@ -688,6 +755,11 @@ Item {
       if (dt > 0.25) dt = 0.25
       root.step(dt)
     }
+  }
+
+  Process {
+    id: hopLogProc
+    running: false
   }
 
   PanelWindow {
