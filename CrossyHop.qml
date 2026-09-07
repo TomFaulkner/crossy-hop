@@ -196,6 +196,15 @@ Item {
   // Gameplay screen row (uses the settled integer anchor).
   function screenRowOf(ar) { return rows - (ar - winAnchorTarget) }
 
+  // Screen-degrees of travel along +col on a lane (rails/roads/rivers).
+  // Use this to align procedural trains/logs — NOT baked car sprites.
+  function laneTravelDeg(ar) {
+    var sr = screenRowF(ar)
+    var x0 = centerX(0, sr), y0 = centerY(0, sr)
+    var x1 = centerX(1, sr), y1 = centerY(1, sr)
+    return Math.atan2(y1 - y0, x1 - x0) * 180 / Math.PI
+  }
+
   function zFor(ar, bias) {
     return 3 + screenRowF(ar) * 0.1 + (bias || 0)
   }
@@ -358,7 +367,7 @@ Item {
   }
 
   function spawnTrain(lane) {
-    var len = 5.5
+    var len = 4.2
     var t = lane.dir === 1 ? -len - 1 : cols + len + 1
     lane.vehicles.push({
       kind: "train",
@@ -372,7 +381,11 @@ Item {
   }
 
   function hitHalf(v) {
-    return 0.40 + v.len * 0.30
+    // Half-extent along the lane (col axis). Trains were using len*0.3+0.4 ≈ 2+
+    // tiles and felt like they hit far off the rail visually when mis-oriented.
+    if (v.kind === "train") return Math.max(0.55, v.len * 0.42)
+    if (v.kind === "log") return Math.max(0.55, v.len * 0.42)
+    return 0.32 + v.len * 0.20
   }
 
   // ---------------------------------------------------------------------------
@@ -944,9 +957,10 @@ Item {
           x: { root.frame; return root.centerX(log.t, sr) - width / 2 }
           y: { root.frame; return root.centerY(log.t, sr) - height / 2 }
           width: root.unit * log.len * 0.95
-          height: root.unit * 0.62
+          height: root.unit * 0.55
           z: 2 + sr * 0.1
-          rotation: root.viewRotationDeg + root.isoAngleDeg
+          // Long axis follows the river lane on screen (includes ROT).
+          rotation: { root.frame; return root.laneTravelDeg(log.ar) }
           transformOrigin: Item.Center
 
           Rectangle {
@@ -972,9 +986,15 @@ Item {
           x: { root.frame; return root.centerX(veh.t, sr) - width / 2 }
           y: { root.frame; return root.centerY(veh.t, sr) - height * 0.70 }
           width: veh.kind === "train" ? root.unit * veh.len * 0.95 : root.carW
-          height: veh.kind === "train" ? root.unit * 0.95 : root.carH
+          height: veh.kind === "train" ? root.unit * 0.52 : root.carH
           z: root.zFor(veh.ar, 0.02) + veh.t / 500
-          rotation: root.viewRotationDeg
+          // Cars: baked sprites + viewRotationDeg. Trains: long axis = lane travel.
+          rotation: {
+            root.frame
+            return veh.kind === "train"
+              ? root.laneTravelDeg(veh.ar)
+              : root.viewRotationDeg
+          }
           transformOrigin: Item.Center
 
           Image {
@@ -988,7 +1008,7 @@ Item {
           Rectangle {
             anchors.fill: parent
             visible: veh.kind === "train"
-            radius: root.unit * 0.18
+            radius: height * 0.35
             color: "#3b4252"
             border.color: "#22262f"
             border.width: 2
@@ -997,7 +1017,7 @@ Item {
               anchors.left: parent.left
               anchors.right: parent.right
               anchors.verticalCenter: parent.verticalCenter
-              height: Math.max(2, parent.height * 0.12)
+              height: Math.max(2, parent.height * 0.18)
               color: root.accent
             }
           }
