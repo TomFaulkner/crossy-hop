@@ -445,12 +445,12 @@ Item {
       if (lane.type === "road") {
         if (lane.spawnT >= lane.interval) {
           lane.spawnT = 0
-          if (lane.vehicles.length < 8 && spawnVehicle(lane, null)) rosterDirty = true
+          if (lane.vehicles.length < 5 && spawnVehicle(lane, null)) rosterDirty = true
         }
       } else if (lane.type === "river") {
         if (lane.spawnT >= lane.interval) {
           lane.spawnT = 0
-          if (lane.vehicles.length < 6 && spawnLog(lane, null)) rosterDirty = true
+          if (lane.vehicles.length < 4 && spawnLog(lane, null)) rosterDirty = true
         }
       } else if (lane.type === "rail") {
         if (lane.vehicles.length === 0 && lane.spawnT >= lane.interval) {
@@ -542,11 +542,11 @@ Item {
       checkChick(dt)
       if (dying) needPaint = true
     }
-    // Positions bind to `frame`; keep that hot. Canvas only when lanes/warn change
-    // or on a slow tick (train-light blink ~5Hz).
+    // Positions bind to `frame`. Logs/trees are Canvas-painted — ~30fps if rivers.
     frame++
     paintAcc += dt
-    if (needPaint || paintAcc >= 0.18 || hopAnim.running || scrollAnim.running) {
+    var paintHz = (flatLogs.length > 0) ? 0.033 : 0.12
+    if (needPaint || paintAcc >= paintHz || hopAnim.running || scrollAnim.running) {
       paintAcc = 0
       playfield.requestPaint()
     }
@@ -945,103 +945,95 @@ Item {
           }
         }
 
+        function drawTreeAt(ctx, cx, cy) {
+          var w = root.propW, h = root.propH
+          var x = cx - w / 2, y = cy - h * 0.78
+          ctx.fillStyle = root.trunkBrown
+          ctx.fillRect(x + w * 0.42, y + h * 0.58, w * 0.16, h * 0.42)
+          ctx.fillStyle = root.treeDark
+          ctx.beginPath()
+          ctx.moveTo(x + w * 0.5, y + h * 0.24)
+          ctx.lineTo(x + w * 0.96, y + h * 0.80)
+          ctx.lineTo(x + w * 0.04, y + h * 0.80)
+          ctx.closePath()
+          ctx.fill()
+          ctx.fillStyle = root.treeGreen
+          ctx.beginPath()
+          ctx.moveTo(x + w * 0.5, y + h * 0.02)
+          ctx.lineTo(x + w * 0.86, y + h * 0.52)
+          ctx.lineTo(x + w * 0.14, y + h * 0.52)
+          ctx.closePath()
+          ctx.fill()
+        }
+
+        function drawBoulderAt(ctx, cx, cy) {
+          var w = root.propW * 0.85, h = root.propH * 0.45
+          ctx.save()
+          ctx.translate(cx, cy - h * 0.15)
+          ctx.scale(1, Math.max(0.35, h / Math.max(w, 1)))
+          ctx.beginPath()
+          ctx.arc(0, 0, w / 2, 0, Math.PI * 2)
+          ctx.fillStyle = root.rockGray
+          ctx.fill()
+          ctx.strokeStyle = root.rockDark
+          ctx.lineWidth = 2
+          ctx.stroke()
+          ctx.restore()
+        }
+
+        function drawLogAt(ctx, log) {
+          var sr = root.screenRowF(log.ar)
+          var cx = root.centerX(log.t, sr)
+          var cy = root.centerY(log.t, sr)
+          var ang = root.laneTravelDeg(log.ar) * Math.PI / 180
+          var len = root.unit * log.len * 0.95
+          var thick = root.unit * 0.55
+          var r = thick / 2
+          ctx.save()
+          ctx.translate(cx, cy)
+          ctx.rotate(ang)
+          ctx.beginPath()
+          ctx.moveTo(-len / 2 + r, -r)
+          ctx.lineTo(len / 2 - r, -r)
+          ctx.arc(len / 2 - r, 0, r, -Math.PI / 2, Math.PI / 2)
+          ctx.lineTo(-len / 2 + r, r)
+          ctx.arc(-len / 2 + r, 0, r, Math.PI / 2, -Math.PI / 2)
+          ctx.closePath()
+          ctx.fillStyle = root.logBrown
+          ctx.fill()
+          ctx.strokeStyle = root.logEdge
+          ctx.lineWidth = 2
+          ctx.stroke()
+          ctx.restore()
+        }
+
         onPaint: {
           var ctx = getContext("2d")
           ctx.reset()
           ctx.imageSmoothingEnabled = false
 
-          // Full-card ground so ROT never leaves empty sky holes around the grid.
           ctx.fillStyle = grass
           ctx.fillRect(0, 0, playW, playH)
 
-          // Far lanes (high ar) first so nearer ones overlap them.
           var keys = Object.keys(root.laneMap)
           var lanes = []
           for (var i = 0; i < keys.length; i++) lanes.push(root.laneMap[keys[i]])
           lanes.sort(function(a, b) { return b.ar - a.ar })
           for (var j = 0; j < lanes.length; j++) drawLane(ctx, lanes[j])
 
-          // (ANGLE/ROT/SCORE HUD is drawn upright on gameFrame, not in the world)
-        }
-      }
-
-      // Trees / boulders (upright, spun with ROT like the baked sprites)
-      Repeater {
-        model: root.flatProps.length
-        Item {
-          required property int index
-          property var prop: root.flatProps[index] || { ar: 0, col: 1, kind: "tree" }
-          property real sr: root.screenRowF(prop.ar)
-          visible: root.flatProps[index] !== undefined
-          x: root.centerX(prop.col, sr) - width / 2
-          y: root.centerY(prop.col, sr) - height * 0.78
-          width: root.propW
-          height: root.propH
-          z: root.zFor(prop.ar, -0.02)
-          rotation: root.viewRotationDeg
-          transformOrigin: Item.Bottom
-
-          Canvas {
-            anchors.fill: parent
-            visible: prop.kind === "tree"
-            onPaint: {
-              var ctx = getContext("2d")
-              var w = width, h = height
-              ctx.reset()
-              ctx.fillStyle = root.trunkBrown
-              ctx.fillRect(w * 0.42, h * 0.58, w * 0.16, h * 0.42)
-              ctx.fillStyle = root.treeDark
-              ctx.beginPath()
-              ctx.moveTo(w * 0.5, h * 0.24)
-              ctx.lineTo(w * 0.96, h * 0.80)
-              ctx.lineTo(w * 0.04, h * 0.80)
-              ctx.closePath()
-              ctx.fill()
-              ctx.fillStyle = root.treeGreen
-              ctx.beginPath()
-              ctx.moveTo(w * 0.5, h * 0.02)
-              ctx.lineTo(w * 0.86, h * 0.52)
-              ctx.lineTo(w * 0.14, h * 0.52)
-              ctx.closePath()
-              ctx.fill()
-            }
+          // Props + logs on one Canvas (avoids per-item Canvas/Rectangle thrash).
+          var props = root.flatProps
+          for (var pi = 0; pi < props.length; pi++) {
+            var prop = props[pi]
+            var psr = root.screenRowF(prop.ar)
+            var pcx = root.centerX(prop.col, psr)
+            var pcy = root.centerY(prop.col, psr)
+            if (prop.kind === "boulder") drawBoulderAt(ctx, pcx, pcy)
+            else drawTreeAt(ctx, pcx, pcy)
           }
-
-          Rectangle {
-            anchors.fill: parent
-            visible: prop.kind === "boulder"
-            radius: width * 0.45
-            color: root.rockGray
-            border.color: root.rockDark
-            border.width: 2
-          }
-        }
-      }
-
-      // Logs (river platforms) — rideable, drawn under the chick
-      Repeater {
-        model: root.flatLogs.length
-        Item {
-          required property int index
-          property var log: root.flatLogs[index] || { t: 0, ar: 0, len: 2, dir: 1, speed: 0, kind: "log" }
-          property real sr: root.screenRowF(log.ar)
-          visible: root.flatLogs[index] !== undefined
-          x: { root.frame; return root.centerX(log.t, sr) - width / 2 }
-          y: { root.frame; return root.centerY(log.t, sr) - height / 2 }
-          width: root.unit * log.len * 0.95
-          height: root.unit * 0.55
-          z: 2 + sr * 0.1
-          // Long axis follows the river lane on screen (includes ROT).
-          rotation: { root.frame; return root.laneTravelDeg(log.ar) }
-          transformOrigin: Item.Center
-
-          Rectangle {
-            anchors.fill: parent
-            radius: height / 2
-            color: root.logBrown
-            border.color: root.logEdge
-            border.width: 2
-          }
+          var logs = root.flatLogs
+          for (var li = 0; li < logs.length; li++)
+            drawLogAt(ctx, logs[li])
         }
       }
 
