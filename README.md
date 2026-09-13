@@ -24,6 +24,8 @@ drowns you, trains splat you.
   down so the chick stays in the bottom third.
 - **Game over** — traffic freezes for half a second, then a `GAME OVER` card
   shows the score. Restart with `Space` / `Enter` / `R` (or just hop again).
+- **Pause** — `P` freezes traffic and the chick under a light veil; the board
+  stays visible. Closing while paused still saves the mid-run state.
 
 ## Edge markers
 
@@ -34,11 +36,19 @@ so you can see the death zone before you cross it.
 ## Controls
 
 - Arrow keys or `W`/`A`/`S`/`D`: hop — up/down across the road, left/right along it
+- `P`: pause / resume (light translucent veil; the board stays visible).
+  Hops are ignored while paused; `Esc` still closes.
 - `Space` / `Enter` / `R`: restart after a game over
+- `Esc`: close — always, whatever the game is doing (never blocked by a save)
+- Click **outside** the game card: close. Click the card: give it keyboard focus.
 - Defaults (Crossy-like dimetric, not true isometric): **ANGLE 40°**, **ROT −26°** (user-matched). Fine-tune still live via hotkeys.
 - `[` / `]`: nudge road **angle** (steepness) ±0.5° — HUD `ANGLE`
 - `;` / `'`: nudge whole-scene **rotation** ±1° — HUD `ROT`
 - `-` / `=`: grow / shrink the game window (default 1.05, max 1.20)
+
+The overlay asks for keyboard focus **on demand** (`WlrKeyboardFocus.OnDemand`),
+not exclusively: Omarchy's own shortcuts keep working while the game is open,
+and keys Crossy Hop does not use are passed straight through.
 
 ## Crash debug log
 
@@ -86,7 +96,9 @@ After QML edits: `omarchy restart shell`.
   driving `step(dt)`, Canvas lane painting (grass diamonds, road bands with
   dashed centre lines, water, rails + sleepers + crossing lights) and Canvas-only
   traffic (cars + trains + logs). Auto-saves mid-run to `save.json`; resumes
-  on reopen. Edge markers show the drown boundary.
+  on reopen. Edge markers show the drown boundary; they (and the lane band
+  edges) stroke with AA on, while sprite `drawImage` stays unsmoothed so the
+  bakes stay crisp.
 - World coordinates: absolute row `ar` grows as you advance;
   `screenRow(ar) = rows - (ar - winAnchor)`. `winAnchor` is a real number so a
   forward hop can animate the world scroll.

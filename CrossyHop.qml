@@ -8,6 +8,8 @@ Item {
   id: root
 
   property string pendingLoadAction: ""
+  // Save payload waiting on a busy ioProc (dismiss must never wait on it).
+  property string pendingSaveB64: ""
   property var shell: null
   property var manifest: null
   property bool opened: false
@@ -103,6 +105,7 @@ Item {
   property int best: 0
   property bool dying: false
   property bool gameOver: false
+  property bool paused: false
   property real deathClock: 0
   property real overClock: 0
   property string deathCause: ""
@@ -172,10 +175,10 @@ Item {
   readonly property real carH: unit * 1.80
   readonly property real carW: carH * 1.15
   // Bacon train bake is ~101x96 (near-square AABB of a diagonal long sprite).
-  // Size so the diagonal ≈ lane length (~len*0.95 units).
-  // Bacon train bake is ~101x96 (near-square AABB of a diagonal long sprite).
+  // Size so the diagonal ≈ lane length (~len*0.95 units). Keep the draw box
+  // near-square: stretching trainW past ~1.05 derails the sprite off the rail.
   readonly property real trainH: unit * 3.8
-  readonly property real trainW: trainH * 1.45
+  readonly property real trainW: trainH * 1.05
   readonly property real chickH: unit * 1.85
   readonly property real chickW: chickH * 0.63
   readonly property real propW: unit * 1.00
@@ -537,6 +540,7 @@ Item {
   function step(dt) {
     try {
 
+    if (paused) return
     clock += dt
     var needPaint = false
     if (dying) {
@@ -624,6 +628,7 @@ Item {
   // Chick
   // ---------------------------------------------------------------------------
   function moveChick(dc, dAr) {
+    if (paused) return
     if (gameOver) {
       if (overClock > 0.4) resetGame()
       return
@@ -694,6 +699,7 @@ Item {
     chickFacing = "ne"
     dying = false
     gameOver = false
+    paused = false
     deathCause = ""
     deathClock = 0
     overClock = 0
@@ -709,29 +715,30 @@ Item {
   // ---------------------------------------------------------------------------
   function open(payloadJson) {
     opened = true
+    paused = false
     bootId++
     lastTick = Date.now()
     debugHopSnapshot("open")
     resetGame()
+    // Focus ONCE on open — never re-steal it (that trapped the compositor).
+    Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+    playfield.requestPaint()
     if (loadProc.running) return
     pendingLoadAction = "checkSave"
     loadProc.command = ["sh", "-c", "test -f \"" + savePath + "\" && echo yes"]
     loadProc.running = true
-    Qt.callLater(function() { keyCatcher.forceActiveFocus() })
-    playfield.requestPaint()
   }
 
   function close() {
-    if (opened && !gameOver)
-      saveGame()
-    else if (gameOver) {
-      if (ioProc.running) return
-      var bestOnly = { best: root.best, midRun: false }
-      var b64 = btoa(JSON.stringify(bestOnly))
-      ioProc.command = ["sh", "-c", "mkdir -p \"" + debugDir + "\" && printf '%s' '" + b64 + "' | base64 -d > \"" + savePath + "\""]
-      ioProc.running = true
-    }
+    // Dismiss is NEVER blocked by IO: clear `opened` first, save best-effort.
+    var wasOpen = opened
     opened = false
+    paused = false
+    if (!wasOpen) return
+    if (gameOver)
+      queueSave({ best: root.best, midRun: false })
+    else
+      queueSave(midRunPayload())
   }
 
   function dismiss() {
@@ -748,8 +755,27 @@ Item {
     muted = !muted
   }
 
+  function togglePause() {
+    paused = !paused
+    if (!paused) lastTick = Date.now()
+    playfield.requestPaint()
+  }
+
+  // Best-effort write: if the shell is busy the payload is queued for the
+  // flush Timer instead of blocking close()/dismiss().
+  function queueSave(data) {
+    var b64
+    try { b64 = btoa(JSON.stringify(data)) } catch (e) { return }
+    if (ioProc.running) { pendingSaveB64 = b64; return }
+    ioProc.command = ["sh", "-c", "mkdir -p \"" + debugDir + "\" && printf '%s' '" + b64 + "' | base64 -d > \"" + savePath + "\""]
+    ioProc.running = true
+  }
+
   function saveGame() {
-    if (ioProc.running) return
+    queueSave(midRunPayload())
+  }
+
+  function midRunPayload() {
     var data = {
       laneMap: root.laneMap,
       chickColF: root.chickColF,
@@ -772,9 +798,7 @@ Item {
       deathCause: root.deathCause,
       midRun: true
     }
-    var b64 = btoa(JSON.stringify(data))
-    ioProc.command = ["sh", "-c", "mkdir -p \"" + debugDir + "\" && printf '%s' '" + b64 + "' | base64 -d > \"" + savePath + "\""]
-    ioProc.running = true
+    return data
   }
 
   function loadGame() {
@@ -808,6 +832,33 @@ Item {
     return viewRotationDeg.toFixed(1) + "°"
   }
 
+  // Single key router — the card catcher and the frame fallback both call it.
+  // Returns true when the key is consumed; unknown keys stay unaccepted so
+  // Omarchy shortcuts are never trapped. Escape ALWAYS dismisses (never
+  // gated on game state or on a running save).
+  function handleKey(event) {
+    if (event.key === Qt.Key_Escape) { dismiss(); return true }
+    if (event.key === Qt.Key_P) { togglePause(); return true }
+    if (event.key === Qt.Key_M) { toggleMute(); return true }
+    if (event.key === Qt.Key_BracketLeft) { nudgeAngle(-0.5); return true }
+    if (event.key === Qt.Key_BracketRight) { nudgeAngle(0.5); return true }
+    if (event.key === Qt.Key_Semicolon) { nudgeRotation(-1); return true }
+    if (event.key === Qt.Key_Apostrophe) { nudgeRotation(1); return true }
+    if (event.key === Qt.Key_Minus || event.key === Qt.Key_Underscore) { nudgeView(-0.05); return true }
+    if (event.key === Qt.Key_Equal || event.key === Qt.Key_Plus) { nudgeView(0.05); return true }
+    if (event.key === Qt.Key_Space || event.key === Qt.Key_Enter || event.key === Qt.Key_Return
+        || event.key === Qt.Key_R) {
+      if (gameOver && overClock > 0.4) { resetGame(); return true }
+      return false
+    }
+    if (paused) return false
+    if (event.key === Qt.Key_Left || event.key === Qt.Key_A) { moveChick(-1, 0); return true }
+    if (event.key === Qt.Key_Right || event.key === Qt.Key_D) { moveChick(1, 0); return true }
+    if (event.key === Qt.Key_Up || event.key === Qt.Key_W) { moveChick(0, 1); return true }
+    if (event.key === Qt.Key_Down || event.key === Qt.Key_S) { moveChick(0, -1); return true }
+    return false
+  }
+
   Component.onCompleted: {
     // Build a world up-front so the card is never empty (even before first open).
     resetGame()
@@ -816,13 +867,27 @@ Item {
   Timer {
     interval: 16
     repeat: true
-    running: root.opened
+    running: root.opened && !root.paused
     onTriggered: {
       var now = Date.now()
       var dt = (now - root.lastTick) / 1000
       root.lastTick = now
       if (dt > 0.25) dt = 0.25
       root.step(dt)
+    }
+  }
+
+  // Flushes a save that had to wait on a busy ioProc (never blocks dismiss).
+  Timer {
+    interval: 250
+    repeat: true
+    running: root.pendingSaveB64 !== ""
+    onTriggered: {
+      if (root.pendingSaveB64 === "" || ioProc.running) return
+      var b64 = root.pendingSaveB64
+      root.pendingSaveB64 = ""
+      ioProc.command = ["sh", "-c", "mkdir -p \"" + root.debugDir + "\" && printf '%s' '" + b64 + "' | base64 -d > \"" + root.savePath + "\""]
+      ioProc.running = true
     }
   }
 
@@ -904,10 +969,14 @@ Item {
     exclusionMode: ExclusionMode.Ignore
     WlrLayershell.namespace: "crossy-hop"
     WlrLayershell.layer: WlrLayer.Overlay
-    WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive
+    // OnDemand, not Exclusive: Exclusive trapped every Omarchy shortcut and
+    // made the overlay impossible to get out of.
+    WlrLayershell.keyboardFocus: WlrKeyboardFocus.OnDemand
 
+    // Click anywhere outside the card = dismiss. Always available.
     MouseArea {
       anchors.fill: parent
+      acceptedButtons: Qt.AllButtons
       onClicked: root.dismiss()
     }
 
@@ -920,7 +989,14 @@ Item {
       transformOrigin: Item.Center
       clip: true
 
-      // Block dismiss when interacting with the game card.
+      // Fallback key handler (fires if focus lands on the frame itself).
+      Keys.priority: Keys.BeforeItem
+      Keys.onPressed: function(event) {
+        if (root.handleKey(event)) event.accepted = true
+      }
+
+      // Block dismiss when interacting with the game card; a click on the
+      // card is an explicit request for keyboard focus (no re-steal loop).
       MouseArea {
         anchors.fill: parent
         acceptedButtons: Qt.AllButtons
@@ -940,6 +1016,7 @@ Item {
         id: playfield
         anchors.fill: parent
         z: 1
+        antialiasing: true
 
         // Quad along a lane: from column c0 to c1 on (possibly fractional) row.
         function laneQuad(ctx, rowF, c0, c1, half) {
@@ -964,6 +1041,11 @@ Item {
           laneQuad(ctx, sr, root.bandC0, root.bandC1, half)
           ctx.fillStyle = fill
           ctx.fill()
+          // Same-colour hairline stroke softens the band's fill edge (the
+          // aliased quad outline is what read as a jagged lane border).
+          ctx.strokeStyle = fill
+          ctx.lineWidth = 1
+          ctx.stroke()
           ctx.restore()
         }
 
@@ -1161,6 +1243,20 @@ Item {
           ctx.restore()
         }
 
+        // Edge markers: AA on for the stroke, drawn as a wide faint halo under
+        // a slightly-wider core line so the stair-step is not visible.
+        function drawEdgeMarker(ctx, pts) {
+          ctx.beginPath()
+          ctx.moveTo(pts[0][0], pts[0][1])
+          for (var i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1])
+          ctx.strokeStyle = Qt.rgba(root.accent.r, root.accent.g, root.accent.b, 0.09)
+          ctx.lineWidth = 3.2
+          ctx.stroke()
+          ctx.strokeStyle = Qt.rgba(root.accent.r, root.accent.g, root.accent.b, 0.22)
+          ctx.lineWidth = 1.6
+          ctx.stroke()
+        }
+
         function drawVehAt(ctx, veh) {
           var sr = root.screenRowF(veh.ar)
           if (sr < -2 || sr > root.rows + 2) return
@@ -1174,7 +1270,10 @@ Item {
         onPaint: {
           var ctx = getContext("2d")
           ctx.reset()
+          // Sprites stay crisp (nearest-neighbour). Strokes opt into AA below.
           ctx.imageSmoothingEnabled = false
+          ctx.lineJoin = "round"
+          ctx.lineCap = "round"
 
           ctx.fillStyle = grass
           ctx.fillRect(0, 0, playW, playH)
@@ -1216,16 +1315,9 @@ Item {
           }
           if (ptsL.length >= 2) {
             ctx.save()
-            ctx.strokeStyle = Qt.rgba(root.accent.r, root.accent.g, root.accent.b, 0.20)
-            ctx.lineWidth = 1
-            ctx.beginPath()
-            ctx.moveTo(ptsL[0][0], ptsL[0][1])
-            for (var i = 1; i < ptsL.length; i++) ctx.lineTo(ptsL[i][0], ptsL[i][1])
-            ctx.stroke()
-            ctx.beginPath()
-            ctx.moveTo(ptsR[0][0], ptsR[0][1])
-            for (var i = 1; i < ptsR.length; i++) ctx.lineTo(ptsR[i][0], ptsR[i][1])
-            ctx.stroke()
+            ctx.imageSmoothingEnabled = true
+            drawEdgeMarker(ctx, ptsL)
+            drawEdgeMarker(ctx, ptsR)
             ctx.restore()
           }
         }
@@ -1283,7 +1375,15 @@ Item {
           font.family: "monospace"
         }
         Text {
-          text: "[ ] angle  ; ' rot  - = size  ESC close"
+          visible: root.paused
+          text: "PAUSED"
+          color: hush
+          font.pixelSize: 20
+          font.bold: true
+          font.family: "monospace"
+        }
+        Text {
+          text: "[ ] angle  ; ' rot  - = size  P pause  ESC close"
           color: ink
           font.pixelSize: 12
           font.family: "monospace"
@@ -1319,11 +1419,40 @@ Item {
         anchors.bottom: parent.bottom
         anchors.bottomMargin: 12
         z: 20
-        text: "ARROWS / WASD  HOP    M  MUTE"
+        text: "ARROWS / WASD  HOP    P  PAUSE    M  MUTE"
         color: ink
         font.pixelSize: 14
         font.bold: true
         font.family: "monospace"
+      }
+
+      // Pause veil — light, so the board stays readable underneath. Sits under
+      // the HUD (z 20) and the game-over card (z 60).
+      Rectangle {
+        anchors.fill: parent
+        z: 15
+        visible: root.paused
+        color: Qt.rgba(root.night.r, root.night.g, root.night.b, 0.30)
+
+        Column {
+          anchors.centerIn: parent
+          spacing: 6
+          Text {
+            anchors.horizontalCenter: parent.horizontalCenter
+            text: "PAUSE"
+            color: root.ink
+            font.pixelSize: 44
+            font.bold: true
+            font.family: "monospace"
+          }
+          Text {
+            anchors.horizontalCenter: parent.horizontalCenter
+            text: "P  RESUME    ESC  CLOSE"
+            color: root.accent
+            font.pixelSize: 14
+            font.family: "monospace"
+          }
+        }
       }
 
       // Game over
@@ -1428,32 +1557,7 @@ Item {
 
         Keys.priority: Keys.BeforeItem
         Keys.onPressed: function(event) {
-          if (event.key === Qt.Key_Escape) root.dismiss()
-          else if (event.key === Qt.Key_M) root.toggleMute()
-          else if (event.key === Qt.Key_BracketLeft) root.nudgeAngle(-0.5)
-          else if (event.key === Qt.Key_BracketRight) root.nudgeAngle(0.5)
-          else if (event.key === Qt.Key_Semicolon) root.nudgeRotation(-1)
-          else if (event.key === Qt.Key_Apostrophe) root.nudgeRotation(1)
-          else if (event.key === Qt.Key_Minus || event.key === Qt.Key_Underscore) root.nudgeView(-0.05)
-          else if (event.key === Qt.Key_Equal || event.key === Qt.Key_Plus) root.nudgeView(0.05)
-          else if (event.key === Qt.Key_Space || event.key === Qt.Key_Enter || event.key === Qt.Key_Return) {
-            if (root.gameOver && root.overClock > 0.4) root.resetGame()
-            else return
-          }
-          else if (event.key === Qt.Key_R) {
-            if (root.gameOver && root.overClock > 0.4) root.resetGame()
-            else return
-          }
-          else if (event.key === Qt.Key_Left || event.key === Qt.Key_A) root.moveChick(-1, 0)
-          else if (event.key === Qt.Key_Right || event.key === Qt.Key_D) root.moveChick(1, 0)
-          else if (event.key === Qt.Key_Up || event.key === Qt.Key_W) root.moveChick(0, 1)
-          else if (event.key === Qt.Key_Down || event.key === Qt.Key_S) root.moveChick(0, -1)
-          else return
-          event.accepted = true
-        }
-
-        onActiveFocusChanged: {
-          if (!activeFocus && root.opened) Qt.callLater(function() { if (root.opened) keyCatcher.forceActiveFocus() })
+          if (root.handleKey(event)) event.accepted = true
         }
       }
     }
