@@ -769,7 +769,8 @@ Item {
       viewRotationDeg: root.viewRotationDeg,
       muted: root.muted,
       gameOver: root.gameOver,
-      deathCause: root.deathCause
+      deathCause: root.deathCause,
+      midRun: true
     }
     var b64 = btoa(JSON.stringify(data))
     ioProc.command = ["sh", "-c", "mkdir -p \"" + debugDir + "\" && printf '%s' '" + b64 + "' | base64 -d > \"" + savePath + "\""]
@@ -855,6 +856,17 @@ Item {
           try {
             var data = JSON.parse(text)
             if (!data || typeof data !== "object") { resetGame(); return }
+            var isBestOnly = data.midRun === false || data.gameOver || !data.laneMap || (typeof data.laneMap === "object" && Object.keys(data.laneMap).length === 0)
+            if (isBestOnly) {
+              resetGame()
+              if (data.best != null) root.best = data.best
+              if (data.viewScale != null) root.viewScale = data.viewScale
+              if (data.muted != null) root.muted = data.muted
+              refreshView()
+              playfield.requestPaint()
+              debugHopSnapshot("open")
+              return
+            }
             root.laneMap = data.laneMap || ({})
             root.chickColF = data.chickColF != null ? data.chickColF : Math.round((root.cols + 1) / 2)
             root.chickAr = data.chickAr != null ? data.chickAr : root.startAr
