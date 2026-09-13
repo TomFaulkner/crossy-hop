@@ -65,6 +65,20 @@ On reopen, a mid-run save is restored instead of resetting. After game over,
 the mid-run save is cleared but `BEST` carries over. Saves live at
 `~/.local/state/crossy-hop/save.json`.
 
+1.2.2 notes:
+
+- The save is **plain JSON** written straight to disk by a `FileView`
+  (atomic temp-file + rename) — no base64, no payload inside `sh -c`, so
+  nothing is truncated and dismiss is never blocked by IO. Lanes serialise as
+  a plain **array** of plain objects (a QML `var` map did not survive
+  `JSON.stringify`, which made every reopen look "best-only" and reset the run).
+- The load now starts **before** any reset: `open()` reads first and only
+  builds a fresh world when there is no mid-run save. The sim is held
+  (`loadHold`) for that read, so a stale world cannot drown the chick on the
+  first frame.
+- `console.warn` reports every save/load (`save ok`, `save failed`,
+  `load: resumed …`, `load: best-only …`).
+
 ## Edge markers
 
 Subtle accent lines mark the playable column edges (the drown boundary
@@ -95,8 +109,10 @@ After QML edits: `omarchy restart shell`.
   centre-fitted into the upright play card), lane generation, a 16 ms `Timer`
   driving `step(dt)`, Canvas lane painting (grass diamonds, road bands with
   dashed centre lines, water, rails + sleepers + crossing lights) and Canvas-only
-  traffic (cars + trains + logs). Auto-saves mid-run to `save.json`; resumes
-  on reopen. Edge markers show the drown boundary; they (and the lane band
+  traffic (cars + trains + logs). Trains draw with their own vertical anchor
+  (`trainYAnchor` 0.51 vs `carYAnchor` 0.70) so the long diagonal bake sits
+  centred on the dark rail bed instead of riding the top rail. Auto-saves
+  mid-run to `save.json`; resumes on reopen. Edge markers show the drown boundary; they (and the lane band
   edges) stroke with AA on, while sprite `drawImage` stays unsmoothed so the
   bakes stay crisp.
 - World coordinates: absolute row `ar` grows as you advance;

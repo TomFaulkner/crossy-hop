@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "io.github.tomfaulkner.crossy-hop",
   "name": "Crossy Hop",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "author": "Tom",
   "license": "MIT",
   "description": "An isometric Crossy Road-ish overlay game for omarchy-shell: endless lanes, traffic, rivers, trains, score and game over.",

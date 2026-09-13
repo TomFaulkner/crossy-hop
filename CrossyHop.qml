@@ -7,9 +7,17 @@ import qs.Commons
 Item {
   id: root
 
-  property string pendingLoadAction: ""
-  // Save payload waiting on a busy ioProc (dismiss must never wait on it).
-  property string pendingSaveB64: ""
+  // Plain JSON waiting to hit disk (dismiss must never wait on IO).
+  property string pendingSaveText: ""
+  property bool saveBusy: false
+  property int saveStall: 0
+  property int saveAttempts: 0
+  property bool dirReady: false
+  // Loading is async: `open()` starts it, and the world only resets when there
+  // is no mid-run save to restore. `loadHold` freezes the sim until it settles
+  // so a stale world cannot kill the chick before the save is applied.
+  property bool loadInFlight: false
+  property bool loadHold: false
   property var shell: null
   property var manifest: null
   property bool opened: false
@@ -179,6 +187,13 @@ Item {
   // near-square: stretching trainW past ~1.05 derails the sprite off the rail.
   readonly property real trainH: unit * 3.8
   readonly property real trainW: trainH * 1.05
+  // Sprite vertical anchor: fraction of the draw box above the lane centre.
+  // Cars sit at 0.70 so their wheels meet the road band. The Bacon train bake
+  // is a long diagonal stripe only ~0.9u thick across the lane, so at 0.70 the
+  // whole body landed above the rail bed (riding the top rail). 0.51 centres
+  // the body on the dark bed and lines its base up with the car's.
+  readonly property real carYAnchor: 0.70
+  readonly property real trainYAnchor: 0.51
   readonly property real chickH: unit * 1.85
   readonly property real chickW: chickH * 0.63
   readonly property real propW: unit * 1.00
@@ -487,8 +502,9 @@ Item {
         var margin = v.len + 2
         if (v.t > -margin && v.t < cols + margin) alive.push(v)
       }
-      if (alive.length !== before) rosterDirty = true
-      lane.vehicles = alive
+      // Only reassign when the roster actually changed: a fresh array every
+      // frame would notify (and thrash) for nothing.
+      if (alive.length !== before) { lane.vehicles = alive; rosterDirty = true }
     }
     if (rosterDirty) rebuildTraffic()
     return paintDirty || rosterDirty
@@ -540,7 +556,9 @@ Item {
   function step(dt) {
     try {
 
-    if (paused) return
+    // `loadHold`: an open() has started an async load — do not run the stale
+    // world (it could drown/squash the chick a frame before the save lands).
+    if (paused || loadHold) return
     clock += dt
     var needPaint = false
     if (dying) {
@@ -628,7 +646,7 @@ Item {
   // Chick
   // ---------------------------------------------------------------------------
   function moveChick(dc, dAr) {
-    if (paused) return
+    if (paused || loadHold) return
     if (gameOver) {
       if (overClock > 0.4) resetGame()
       return
@@ -719,14 +737,12 @@ Item {
     bootId++
     lastTick = Date.now()
     debugHopSnapshot("open")
-    resetGame()
     // Focus ONCE on open — never re-steal it (that trapped the compositor).
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
     playfield.requestPaint()
-    if (loadProc.running) return
-    pendingLoadAction = "checkSave"
-    loadProc.command = ["sh", "-c", "test -f \"" + savePath + "\" && echo yes"]
-    loadProc.running = true
+    // No reset here: the load runs first and resets only when there is nothing
+    // to resume, so a mid-run save is never wiped by the opening reset.
+    loadGame()
   }
 
   function close() {
@@ -734,9 +750,18 @@ Item {
     var wasOpen = opened
     opened = false
     paused = false
+    loadHold = false
     if (!wasOpen) return
+    // Save is queued before/independent of teardown, so dismiss never waits.
     if (gameOver)
-      queueSave({ best: root.best, midRun: false })
+      queueSave({
+        best: root.best,
+        viewScale: root.viewScale,
+        isoAngleDeg: root.isoAngleDeg,
+        viewRotationDeg: root.viewRotationDeg,
+        muted: root.muted,
+        midRun: false
+      })
     else
       queueSave(midRunPayload())
   }
@@ -761,13 +786,110 @@ Item {
     playfield.requestPaint()
   }
 
-  // Best-effort write: if the shell is busy the payload is queued for the
-  // flush Timer instead of blocking close()/dismiss().
+  // Lanes serialise to a plain ARRAY of plain objects: a QML `var` map does not
+  // survive JSON.stringify() reliably here (it came back `{}`, so every reopen
+  // looked "best-only" and reset the run — Tom's "never resumes").
+  function serializeLanes() {
+    var keys = Object.keys(laneMap)
+    var out = []
+    for (var i = 0; i < keys.length; i++) {
+      var lane = laneMap[keys[i]]
+      if (!lane) continue
+      var vehs = []
+      for (var j = 0; j < lane.vehicles.length; j++) {
+        var v = lane.vehicles[j]
+        vehs.push({
+          kind: v.kind,
+          t: v.t,
+          ar: v.ar,
+          len: v.len,
+          dir: v.dir,
+          speed: v.speed,
+          image: v.image || ""
+        })
+      }
+      var obs = []
+      for (var k = 0; k < lane.obstacles.length; k++)
+        obs.push({ col: lane.obstacles[k].col, kind: lane.obstacles[k].kind })
+      out.push({
+        ar: lane.ar,
+        type: lane.type,
+        dir: lane.dir,
+        speed: lane.speed,
+        interval: lane.interval,
+        spawnT: lane.spawnT,
+        warn: lane.warn,
+        obstacles: obs,
+        vehicles: vehs
+      })
+    }
+    return out
+  }
+
+  // Rebuilds a laneMap (plain object keyed by absolute row) from that array.
+  function deserializeLanes(arr) {
+    var map = ({})
+    if (!arr || typeof arr.length !== "number") return map
+    for (var i = 0; i < arr.length; i++) {
+      var l = arr[i]
+      if (!l || l.ar === undefined || l.ar === null) continue
+      var ar = parseInt(l.ar, 10)
+      var lane = makeLane(ar, l.type || "grass")
+      lane.dir = l.dir === -1 ? -1 : 1
+      lane.speed = typeof l.speed === "number" ? l.speed : 1
+      lane.interval = typeof l.interval === "number" ? l.interval : 2
+      lane.spawnT = typeof l.spawnT === "number" ? l.spawnT : 0
+      lane.warn = l.warn ? 1 : 0
+      var obs = l.obstacles || []
+      for (var k = 0; k < obs.length; k++)
+        lane.obstacles.push({ col: obs[k].col, kind: obs[k].kind || "tree" })
+      var vehs = l.vehicles || []
+      for (var j = 0; j < vehs.length; j++) {
+        var v = vehs[j]
+        lane.vehicles.push({
+          kind: v.kind === "log" || v.kind === "train" ? v.kind : "car",
+          t: typeof v.t === "number" ? v.t : 0,
+          ar: ar,
+          len: typeof v.len === "number" ? v.len : 1.6,
+          dir: v.dir === -1 ? -1 : 1,
+          speed: typeof v.speed === "number" ? v.speed : 1,
+          image: v.image || ""
+        })
+      }
+      map[ar] = lane
+    }
+    return map
+  }
+
+  // Best-effort write: nothing here blocks close()/dismiss(). Plain JSON goes
+  // straight to saveFile (atomic, in-shell) — no b64, no payload in `sh -c`.
   function queueSave(data) {
-    var b64
-    try { b64 = btoa(JSON.stringify(data)) } catch (e) { return }
-    if (ioProc.running) { pendingSaveB64 = b64; return }
-    ioProc.command = ["sh", "-c", "mkdir -p \"" + debugDir + "\" && printf '%s' '" + b64 + "' | base64 -d > \"" + savePath + "\""]
+    var text = ""
+    try { text = JSON.stringify(data) } catch (e) {
+      console.warn("[crossy-hop] save serialize failed", e)
+      return
+    }
+    if (!text || text === "undefined") {
+      console.warn("[crossy-hop] save serialize empty")
+      return
+    }
+    pendingSaveText = text
+    saveAttempts = 0
+    saveStall = 0
+    flushSave()
+  }
+
+  function flushSave() {
+    if (pendingSaveText === "" || saveBusy) return
+    if (!dirReady) { ensureDir(); return }
+    saveBusy = true
+    saveFile.setText(pendingSaveText)
+  }
+
+  // mkdir only — tiny argv, never carries save data.
+  function ensureDir() {
+    if (ioProc.running || saveAttempts > 2) return
+    ioProc.command = ["sh", "-c", "mkdir -p \"$1\"", "sh", debugDir]
     ioProc.running = true
   }
 
@@ -777,7 +899,7 @@ Item {
 
   function midRunPayload() {
     var data = {
-      laneMap: root.laneMap,
+      lanes: serializeLanes(),
       chickColF: root.chickColF,
       chickAr: root.chickAr,
       chickFacing: root.chickFacing,
@@ -801,11 +923,101 @@ Item {
     return data
   }
 
+  // Async read. `open()` calls this FIRST; the world only resets if there is no
+  // mid-run save. `loadHold` parks the sim (and the stale previous session) for
+  // the few ms the read takes.
   function loadGame() {
-    if (loadProc.running) return
-    pendingLoadAction = "loadSave"
-    loadProc.command = ["sh", "-c", "cat \"" + savePath + "\" 2>/dev/null"]
-    loadProc.running = true
+    if (loadInFlight) return
+    loadInFlight = true
+    loadHold = true
+    loadWatch.restart()
+    saveFile.reload()
+  }
+
+  function onSaveLoaded(text) {
+    if (!loadInFlight) return
+    loadInFlight = false
+    loadHold = false
+    loadWatch.stop()
+    if (!text || !text.trim()) {
+      console.warn("[crossy-hop] load: save file empty -> fresh run")
+      resetGame()
+      return
+    }
+    var data = null
+    try { data = JSON.parse(text) } catch (e) {
+      console.warn("[crossy-hop] load: parse failed", e)
+    }
+    if (!data || typeof data !== "object") { resetGame(); return }
+    applySave(data)
+  }
+
+  function onSaveLoadFailed(error) {
+    if (!loadInFlight) return
+    loadInFlight = false
+    loadHold = false
+    loadWatch.stop()
+    console.warn("[crossy-hop] load: no save file", error)
+    resetGame()
+  }
+
+  function onLoadTimeout() {
+    if (!loadInFlight) return
+    // No signal came back: try whatever the view has buffered before giving up.
+    var txt = saveFile.text()
+    if (txt && txt.trim()) { onSaveLoaded(txt); return }
+    loadInFlight = false
+    loadHold = false
+    console.warn("[crossy-hop] load: timed out -> fresh run")
+    resetGame()
+  }
+
+  function applySave(data) {
+    var lanes = deserializeLanes(data.lanes)
+    var laneCount = Object.keys(lanes).length
+
+    // BEST + view prefs always carry over, mid-run or not.
+    if (data.best != null) root.best = data.best
+    if (data.viewScale != null) root.viewScale = data.viewScale
+    if (data.isoAngleDeg != null) root.isoAngleDeg = data.isoAngleDeg
+    if (data.viewRotationDeg != null) root.viewRotationDeg = data.viewRotationDeg
+    if (data.muted != null) root.muted = data.muted
+
+    if (data.midRun !== true || laneCount === 0) {
+      console.warn("[crossy-hop] load: best-only best=" + root.best)
+      resetGame()
+      return
+    }
+
+    root.laneMap = lanes
+    root.chickColF = data.chickColF != null ? data.chickColF : Math.round((root.cols + 1) / 2)
+    root.chickAr = data.chickAr != null ? data.chickAr : root.startAr
+    root.chickFacing = data.chickFacing || "ne"
+    root.visCol = data.visCol != null ? data.visCol : root.chickColF
+    root.visAr = data.visAr != null ? data.visAr : root.chickAr
+    root.score = data.score || 0
+    root.winAnchorTarget = data.winAnchorTarget || 0
+    root.winAnchor = root.winAnchorTarget
+    root.nextAr = data.nextAr || 0
+    root.genLastType = data.genLastType || "grass"
+    root.genRun = data.genRun || 0
+    root.gameOver = data.gameOver === true
+    root.deathCause = data.deathCause || ""
+    root.dying = false
+    root.deathClock = 0
+    root.overClock = 0
+    root.paused = false
+    root.hopCount = 0
+    root.chickSquash = 1
+    root.hopZ = 0
+    ensureLanes(root.winAnchorTarget + root.rows + 1)
+    if (!root.laneMap[root.chickAr]) ensureLanes(root.chickAr)
+    refreshView()
+    playfield.requestPaint()
+    console.warn("[crossy-hop] load: resumed score=" + root.score
+                 + " ar=" + root.chickAr + " col=" + Number(root.chickColF).toFixed(2)
+                 + " lanes=" + laneCount + " best=" + root.best)
+    debugHopSnapshot("resume")
   }
 
   function nudgeAngle(delta) {
@@ -862,6 +1074,8 @@ Item {
   Component.onCompleted: {
     // Build a world up-front so the card is never empty (even before first open).
     resetGame()
+    // State dir must exist before the first save; tiny argv, no payload.
+    ensureDir()
   }
 
   Timer {
@@ -877,17 +1091,60 @@ Item {
     }
   }
 
-  // Flushes a save that had to wait on a busy ioProc (never blocks dismiss).
+  // Load watchdog: if the read never reports back, start fresh rather than
+  // leaving the overlay holding a stale world.
+  Timer {
+    id: loadWatch
+    interval: 800
+    repeat: false
+    running: false
+    onTriggered: root.onLoadTimeout()
+  }
+
+  // Retries a queued save (mkdir not done / write still busy). Runs whether or
+  // not the overlay is open, so a save started on dismiss still lands.
   Timer {
     interval: 250
     repeat: true
-    running: root.pendingSaveB64 !== ""
+    running: root.pendingSaveText !== ""
     onTriggered: {
-      if (root.pendingSaveB64 === "" || ioProc.running) return
-      var b64 = root.pendingSaveB64
-      root.pendingSaveB64 = ""
-      ioProc.command = ["sh", "-c", "mkdir -p \"" + root.debugDir + "\" && printf '%s' '" + b64 + "' | base64 -d > \"" + root.savePath + "\""]
-      ioProc.running = true
+      if (root.pendingSaveText === "") return
+      if (root.saveBusy) {
+        // A write that never reports must not wedge every later save.
+        root.saveStall++
+        if (root.saveStall > 8) { root.saveStall = 0; root.saveBusy = false }
+        return
+      }
+      root.saveStall = 0
+      root.flushSave()
+    }
+  }
+
+  // Durable save target: plain JSON, atomic write (temp + rename), no shell.
+  FileView {
+    id: saveFile
+    path: root.savePath
+    printErrors: false
+    onLoaded: function() { root.onSaveLoaded(saveFile.text()) }
+    onLoadFailed: function(error) { root.onSaveLoadFailed(error) }
+    onSaved: function() {
+      var n = root.pendingSaveText.length
+      root.saveBusy = false
+      root.saveStall = 0
+      root.pendingSaveText = ""
+      console.warn("[crossy-hop] save ok bytes=" + n + " -> " + root.savePath)
+    }
+    onSaveFailed: function(error) {
+      root.saveBusy = false
+      root.saveAttempts++
+      console.warn("[crossy-hop] save failed", error)
+      if (root.saveAttempts <= 2) {
+        root.dirReady = false
+        root.ensureDir()
+      } else {
+        root.pendingSaveText = ""
+        console.warn("[crossy-hop] save giving up")
+      }
     }
   }
 
@@ -896,67 +1153,13 @@ Item {
     running: false
   }
 
+  // mkdir -p for the state dir. Never runs with save data in argv.
   Process {
     id: ioProc
     running: false
-  }
-
-  Process {
-    id: loadProc
-    running: false
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: function() {
-        var text = this.text.trim()
-        if (pendingLoadAction === "checkSave") {
-          pendingLoadAction = ""
-          if (text === "yes") {
-            pendingLoadAction = "loadSave"
-            loadProc.command = ["sh", "-c", "cat \"" + savePath + "\" 2>/dev/null"]
-            loadProc.running = true
-          }
-        } else if (pendingLoadAction === "loadSave") {
-          pendingLoadAction = ""
-          if (!text) return
-          try {
-            var data = JSON.parse(text)
-            if (!data || typeof data !== "object") { resetGame(); return }
-            var isBestOnly = data.midRun === false || data.gameOver || !data.laneMap || (typeof data.laneMap === "object" && Object.keys(data.laneMap).length === 0)
-            if (isBestOnly) {
-              resetGame()
-              if (data.best != null) root.best = data.best
-              if (data.viewScale != null) root.viewScale = data.viewScale
-              if (data.muted != null) root.muted = data.muted
-              refreshView()
-              playfield.requestPaint()
-              debugHopSnapshot("open")
-              return
-            }
-            root.laneMap = data.laneMap || ({})
-            root.chickColF = data.chickColF != null ? data.chickColF : Math.round((root.cols + 1) / 2)
-            root.chickAr = data.chickAr != null ? data.chickAr : root.startAr
-            root.chickFacing = data.chickFacing || "ne"
-            root.visCol = data.visCol != null ? data.visCol : root.chickColF
-            root.visAr = data.visAr != null ? data.visAr : root.chickAr
-            root.score = data.score || 0
-            if (data.best != null) root.best = data.best
-            root.winAnchor = data.winAnchor || 0
-            root.winAnchorTarget = data.winAnchorTarget || 0
-            root.nextAr = data.nextAr || 0
-            root.genLastType = data.genLastType || "grass"
-            root.genRun = data.genRun || 0
-            if (data.viewScale != null) root.viewScale = data.viewScale
-            if (data.isoAngleDeg != null) root.isoAngleDeg = data.isoAngleDeg
-            if (data.viewRotationDeg != null) root.viewRotationDeg = data.viewRotationDeg
-            if (data.muted != null) root.muted = data.muted
-            root.gameOver = data.gameOver || false
-            root.deathCause = data.deathCause || ""
-            refreshView()
-            playfield.requestPaint()
-            debugHopSnapshot("open")
-          } catch(e) { resetGame() }
-        }
-      }
+    onExited: function(exitCode, exitStatus) {
+      root.dirReady = (exitCode === 0)
+      if (root.dirReady) root.flushSave()
     }
   }
 
@@ -1262,9 +1465,11 @@ Item {
           if (sr < -2 || sr > root.rows + 2) return
           var cx = root.centerX(veh.t, sr)
           var cy = root.centerY(veh.t, sr)
-          var w = veh.kind === "train" ? root.trainW : root.carW
-          var h = veh.kind === "train" ? root.trainH : root.carH
-          drawSprite(ctx, spriteFor(veh.image), cx, cy, w, h, root.viewRotationDeg, 0.70)
+          var isTrain = veh.kind === "train"
+          var w = isTrain ? root.trainW : root.carW
+          var h = isTrain ? root.trainH : root.carH
+          drawSprite(ctx, spriteFor(veh.image), cx, cy, w, h, root.viewRotationDeg,
+                     isTrain ? root.trainYAnchor : root.carYAnchor)
         }
 
         onPaint: {
