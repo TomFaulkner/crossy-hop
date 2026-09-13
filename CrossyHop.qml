@@ -7,6 +7,7 @@ import qs.Commons
 Item {
   id: root
 
+  property string pendingLoadAction: ""
   property var shell: null
   property var manifest: null
   property bool opened: false
@@ -697,9 +698,6 @@ Item {
     deathClock = 0
     overClock = 0
     paintAcc = 0
-    if (ioProc.running) return
-    ioProc.command = ["sh", "-c", "rm -f \"" + savePath + "\""]
-    ioProc.running = true
     ensureLanes(rows + 2)
     refreshView()
     playfield.requestPaint()
@@ -714,17 +712,11 @@ Item {
     bootId++
     lastTick = Date.now()
     debugHopSnapshot("open")
-    // If a mid-run save exists, restore it; otherwise start fresh.
-    // Always load best from save if available.
-    ioProc.command = ["sh", "-c", "test -f \"" + savePath + "\" && echo yes"]
-    ioProc.running = true
-    ioProc.onFinished = function(code, out) {
-      if (code === 0 && out && out.trim() === "yes") {
-        loadGame()
-      } else {
-        resetGame()
-      }
-    }
+    resetGame()
+    if (loadProc.running) return
+    pendingLoadAction = "checkSave"
+    loadProc.command = ["sh", "-c", "test -f \"" + savePath + "\" && echo yes"]
+    loadProc.running = true
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
     playfield.requestPaint()
   }
@@ -734,7 +726,9 @@ Item {
       saveGame()
     else if (gameOver) {
       if (ioProc.running) return
-      ioProc.command = ["sh", "-c", "rm -f \"" + savePath + "\""]
+      var bestOnly = { best: root.best, midRun: false }
+      var b64 = btoa(JSON.stringify(bestOnly))
+      ioProc.command = ["sh", "-c", "mkdir -p \"" + debugDir + "\" && printf '%s' '" + b64 + "' | base64 -d > \"" + savePath + "\""]
       ioProc.running = true
     }
     opened = false
@@ -783,38 +777,10 @@ Item {
   }
 
   function loadGame() {
-    if (ioProc.running) return
-    ioProc.command = ["sh", "-c", "base64 -d \"" + savePath + "\" 2>/dev/null"]
-    ioProc.running = true
-    ioProc.onFinished = function(code, out) {
-      if (code !== 0 || !out) return
-      try {
-        var data = JSON.parse(out.trim())
-        if (!data || typeof data !== "object") return
-        root.laneMap = data.laneMap || ({})
-        root.chickColF = data.chickColF != null ? data.chickColF : Math.round((root.cols + 1) / 2)
-        root.chickAr = data.chickAr != null ? data.chickAr : root.startAr
-        root.chickFacing = data.chickFacing || "ne"
-        root.visCol = data.visCol != null ? data.visCol : root.chickColF
-        root.visAr = data.visAr != null ? data.visAr : root.chickAr
-        root.score = data.score || 0
-        if (data.best != null) root.best = data.best
-        root.winAnchor = data.winAnchor || 0
-        root.winAnchorTarget = data.winAnchorTarget || 0
-        root.nextAr = data.nextAr || 0
-        root.genLastType = data.genLastType || "grass"
-        root.genRun = data.genRun || 0
-        if (data.viewScale != null) root.viewScale = data.viewScale
-        if (data.isoAngleDeg != null) root.isoAngleDeg = data.isoAngleDeg
-        if (data.viewRotationDeg != null) root.viewRotationDeg = data.viewRotationDeg
-        if (data.muted != null) root.muted = data.muted
-        root.gameOver = data.gameOver || false
-        root.deathCause = data.deathCause || ""
-        refreshView()
-        playfield.requestPaint()
-        debugHopSnapshot("open")
-      } catch(e) { /* corrupt save → fresh start */ }
-    }
+    if (loadProc.running) return
+    pendingLoadAction = "loadSave"
+    loadProc.command = ["sh", "-c", "cat \"" + savePath + "\" 2>/dev/null"]
+    loadProc.running = true
   }
 
   function nudgeAngle(delta) {
@@ -867,6 +833,54 @@ Item {
   Process {
     id: ioProc
     running: false
+  }
+
+  Process {
+    id: loadProc
+    running: false
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: function() {
+        var text = this.text.trim()
+        if (pendingLoadAction === "checkSave") {
+          pendingLoadAction = ""
+          if (text === "yes") {
+            pendingLoadAction = "loadSave"
+            loadProc.command = ["sh", "-c", "cat \"" + savePath + "\" 2>/dev/null"]
+            loadProc.running = true
+          }
+        } else if (pendingLoadAction === "loadSave") {
+          pendingLoadAction = ""
+          if (!text) return
+          try {
+            var data = JSON.parse(text)
+            if (!data || typeof data !== "object") { resetGame(); return }
+            root.laneMap = data.laneMap || ({})
+            root.chickColF = data.chickColF != null ? data.chickColF : Math.round((root.cols + 1) / 2)
+            root.chickAr = data.chickAr != null ? data.chickAr : root.startAr
+            root.chickFacing = data.chickFacing || "ne"
+            root.visCol = data.visCol != null ? data.visCol : root.chickColF
+            root.visAr = data.visAr != null ? data.visAr : root.chickAr
+            root.score = data.score || 0
+            if (data.best != null) root.best = data.best
+            root.winAnchor = data.winAnchor || 0
+            root.winAnchorTarget = data.winAnchorTarget || 0
+            root.nextAr = data.nextAr || 0
+            root.genLastType = data.genLastType || "grass"
+            root.genRun = data.genRun || 0
+            if (data.viewScale != null) root.viewScale = data.viewScale
+            if (data.isoAngleDeg != null) root.isoAngleDeg = data.isoAngleDeg
+            if (data.viewRotationDeg != null) root.viewRotationDeg = data.viewRotationDeg
+            if (data.muted != null) root.muted = data.muted
+            root.gameOver = data.gameOver || false
+            root.deathCause = data.deathCause || ""
+            refreshView()
+            playfield.requestPaint()
+            debugHopSnapshot("open")
+          } catch(e) { resetGame() }
+        }
+      }
+    }
   }
 
   PanelWindow {
@@ -1182,22 +1196,23 @@ Item {
           // drownColMin / drownColMax so the chick can see the boundary.
           var eL = root.drownColMin
           var eR = root.drownColMax
-          for (var er = 1; er <= root.rows; er++) {
-            var sr = root.screenRowF(er)
-            if (sr < -2 || sr > root.rows + 2) continue
-            var exL = root.centerX(eL, sr)
-            var exR = root.centerX(eR, sr)
-            var ey = root.centerY(eL, sr)
+          var ptsL = []
+          var ptsR = []
+          for (var sr = 1; sr <= root.rows; sr++) {
+            ptsL.push([root.centerX(eL, sr), root.centerY(eL, sr)])
+            ptsR.push([root.centerX(eR, sr), root.centerY(eR, sr)])
+          }
+          if (ptsL.length >= 2) {
             ctx.save()
-            ctx.strokeStyle = Qt.rgba(root.accent.r, root.accent.g, root.accent.b, 0.15)
+            ctx.strokeStyle = Qt.rgba(root.accent.r, root.accent.g, root.accent.b, 0.20)
             ctx.lineWidth = 1
             ctx.beginPath()
-            ctx.moveTo(exL, ey - root.unit * 0.6)
-            ctx.lineTo(exL, ey + root.unit * 0.6)
+            ctx.moveTo(ptsL[0][0], ptsL[0][1])
+            for (var i = 1; i < ptsL.length; i++) ctx.lineTo(ptsL[i][0], ptsL[i][1])
             ctx.stroke()
             ctx.beginPath()
-            ctx.moveTo(exR, ey - root.unit * 0.6)
-            ctx.lineTo(exR, ey + root.unit * 0.6)
+            ctx.moveTo(ptsR[0][0], ptsR[0][1])
+            for (var i = 1; i < ptsR.length; i++) ctx.lineTo(ptsR[i][0], ptsR[i][1])
             ctx.stroke()
             ctx.restore()
           }
