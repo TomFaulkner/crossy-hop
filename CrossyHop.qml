@@ -193,7 +193,7 @@ Item {
   // whole body landed above the rail bed (riding the top rail). 0.51 centres
   // the body on the dark bed and lines its base up with the car's.
   readonly property real carYAnchor: 0.70
-  readonly property real trainYAnchor: 0.51
+  readonly property real trainYAnchor: 0.59
   readonly property real chickH: unit * 1.85
   readonly property real chickW: chickH * 0.63
   readonly property real propW: unit * 1.00
