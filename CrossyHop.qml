@@ -19,6 +19,7 @@ Item {
   readonly property string stateHome: Quickshell.env("XDG_STATE_HOME") || (homeDir + "/.local/state")
   readonly property string debugDir: stateHome + "/crossy-hop"
   readonly property string debugLogPath: debugDir + "/hop-debug.log"
+  readonly property string savePath: debugDir + "/save.json"
 
   // Grid / iso — Crossy dimetric defaults (not true iso): pitch 40°, yaw -26° (user-matched).
   // `rows` is the sliding window height: only ~9 rows of the infinite world exist at a time.
@@ -32,7 +33,7 @@ Item {
 
   // View chrome: scale = window size; ROT is baked into isoX/isoY (card stays full + upright).
   // [ ] angle (road steepness)   ; ' rotation   - = size
-  property real viewScale: 0.62
+  property real viewScale: 1.05
   property real viewRotationDeg: -26
   property int winW: Math.round(playW * viewScale + 32)
   property int winH: Math.round(playH * viewScale + 56)
@@ -90,6 +91,11 @@ Item {
   property real hopZ: 0
   property real chickSquash: 1
   property string chickFacing: "ne"
+
+  // Drown thresholds: off-screen carry = water death. No dwell timer —
+  // being on a log does not save you once the log carries you past these edges.
+  readonly property real drownColMin: 0.35
+  readonly property real drownColMax: cols + 0.65
 
   // Run state
   property int score: 0
@@ -167,8 +173,8 @@ Item {
   // Bacon train bake is ~101x96 (near-square AABB of a diagonal long sprite).
   // Size so the diagonal ≈ lane length (~len*0.95 units).
   // Bacon train bake is ~101x96 (near-square AABB of a diagonal long sprite).
-  readonly property real trainH: unit * 2.85
-  readonly property real trainW: trainH * 1.05
+  readonly property real trainH: unit * 3.8
+  readonly property real trainW: trainH * 1.45
   readonly property real chickH: unit * 1.85
   readonly property real chickW: chickH * 0.63
   readonly property real propW: unit * 1.00
@@ -381,7 +387,7 @@ Item {
   }
 
   function spawnTrain(lane) {
-    var len = 4.2
+    var len = 5.2
     var t = lane.dir === 1 ? -len - 1 : cols + len + 1
     lane.vehicles.push({
       kind: "train",
@@ -514,7 +520,7 @@ Item {
       if (!raft) { die("water"); return }
       chickColF += raft.dir * raft.speed * dt
       if (!hopAnim.running) visCol = chickColF
-      if (chickColF < 0.6 || chickColF > cols + 0.4) die("water")
+      if (chickColF < drownColMin || chickColF > drownColMax) die("water")
     }
   }
 
@@ -691,6 +697,9 @@ Item {
     deathClock = 0
     overClock = 0
     paintAcc = 0
+    if (ioProc.running) return
+    ioProc.command = ["sh", "-c", "rm -f \"" + savePath + "\""]
+    ioProc.running = true
     ensureLanes(rows + 2)
     refreshView()
     playfield.requestPaint()
@@ -703,14 +712,31 @@ Item {
   function open(payloadJson) {
     opened = true
     bootId++
-    resetGame()
     lastTick = Date.now()
     debugHopSnapshot("open")
+    // If a mid-run save exists, restore it; otherwise start fresh.
+    // Always load best from save if available.
+    ioProc.command = ["sh", "-c", "test -f \"" + savePath + "\" && echo yes"]
+    ioProc.running = true
+    ioProc.onFinished = function(code, out) {
+      if (code === 0 && out && out.trim() === "yes") {
+        loadGame()
+      } else {
+        resetGame()
+      }
+    }
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
     playfield.requestPaint()
   }
 
   function close() {
+    if (opened && !gameOver)
+      saveGame()
+    else if (gameOver) {
+      if (ioProc.running) return
+      ioProc.command = ["sh", "-c", "rm -f \"" + savePath + "\""]
+      ioProc.running = true
+    }
     opened = false
   }
 
@@ -728,6 +754,69 @@ Item {
     muted = !muted
   }
 
+  function saveGame() {
+    if (ioProc.running) return
+    var data = {
+      laneMap: root.laneMap,
+      chickColF: root.chickColF,
+      chickAr: root.chickAr,
+      chickFacing: root.chickFacing,
+      visCol: root.visCol,
+      visAr: root.visAr,
+      score: root.score,
+      best: root.best,
+      winAnchor: root.winAnchor,
+      winAnchorTarget: root.winAnchorTarget,
+      nextAr: root.nextAr,
+      genLastType: root.genLastType,
+      genRun: root.genRun,
+      viewScale: root.viewScale,
+      isoAngleDeg: root.isoAngleDeg,
+      viewRotationDeg: root.viewRotationDeg,
+      muted: root.muted,
+      gameOver: root.gameOver,
+      deathCause: root.deathCause
+    }
+    var b64 = btoa(JSON.stringify(data))
+    ioProc.command = ["sh", "-c", "mkdir -p \"" + debugDir + "\" && printf '%s' '" + b64 + "' | base64 -d > \"" + savePath + "\""]
+    ioProc.running = true
+  }
+
+  function loadGame() {
+    if (ioProc.running) return
+    ioProc.command = ["sh", "-c", "base64 -d \"" + savePath + "\" 2>/dev/null"]
+    ioProc.running = true
+    ioProc.onFinished = function(code, out) {
+      if (code !== 0 || !out) return
+      try {
+        var data = JSON.parse(out.trim())
+        if (!data || typeof data !== "object") return
+        root.laneMap = data.laneMap || ({})
+        root.chickColF = data.chickColF != null ? data.chickColF : Math.round((root.cols + 1) / 2)
+        root.chickAr = data.chickAr != null ? data.chickAr : root.startAr
+        root.chickFacing = data.chickFacing || "ne"
+        root.visCol = data.visCol != null ? data.visCol : root.chickColF
+        root.visAr = data.visAr != null ? data.visAr : root.chickAr
+        root.score = data.score || 0
+        if (data.best != null) root.best = data.best
+        root.winAnchor = data.winAnchor || 0
+        root.winAnchorTarget = data.winAnchorTarget || 0
+        root.nextAr = data.nextAr || 0
+        root.genLastType = data.genLastType || "grass"
+        root.genRun = data.genRun || 0
+        if (data.viewScale != null) root.viewScale = data.viewScale
+        if (data.isoAngleDeg != null) root.isoAngleDeg = data.isoAngleDeg
+        if (data.viewRotationDeg != null) root.viewRotationDeg = data.viewRotationDeg
+        if (data.muted != null) root.muted = data.muted
+        root.gameOver = data.gameOver || false
+        root.deathCause = data.deathCause || ""
+        refreshView()
+        playfield.requestPaint()
+        debugHopSnapshot("open")
+      } catch(e) { /* corrupt save → fresh start */ }
+    }
+  }
+
   function nudgeAngle(delta) {
     isoAngleDeg = Math.round((Math.max(8, Math.min(50, isoAngleDeg + delta))) * 10) / 10
     frame++
@@ -735,7 +824,7 @@ Item {
   }
 
   function nudgeView(delta) {
-    viewScale = Math.round((Math.max(0.35, Math.min(0.95, viewScale + delta))) * 100) / 100
+    viewScale = Math.round((Math.max(0.35, Math.min(1.20, viewScale + delta))) * 100) / 100
   }
 
   function nudgeRotation(delta) {
@@ -772,6 +861,11 @@ Item {
 
   Process {
     id: hopLogProc
+    running: false
+  }
+
+  Process {
+    id: ioProc
     running: false
   }
 
@@ -1083,6 +1177,30 @@ Item {
           var cars = root.flatTraffic
           for (var vi = 0; vi < cars.length; vi++)
             drawVehAt(ctx, cars[vi])
+
+          // Visual playable-edge markers (Task 1b): subtle lines at
+          // drownColMin / drownColMax so the chick can see the boundary.
+          var eL = root.drownColMin
+          var eR = root.drownColMax
+          for (var er = 1; er <= root.rows; er++) {
+            var sr = root.screenRowF(er)
+            if (sr < -2 || sr > root.rows + 2) continue
+            var exL = root.centerX(eL, sr)
+            var exR = root.centerX(eR, sr)
+            var ey = root.centerY(eL, sr)
+            ctx.save()
+            ctx.strokeStyle = Qt.rgba(root.accent.r, root.accent.g, root.accent.b, 0.15)
+            ctx.lineWidth = 1
+            ctx.beginPath()
+            ctx.moveTo(exL, ey - root.unit * 0.6)
+            ctx.lineTo(exL, ey + root.unit * 0.6)
+            ctx.stroke()
+            ctx.beginPath()
+            ctx.moveTo(exR, ey - root.unit * 0.6)
+            ctx.lineTo(exR, ey + root.unit * 0.6)
+            ctx.stroke()
+            ctx.restore()
+          }
         }
       }
 

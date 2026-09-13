@@ -19,11 +19,17 @@ drowns you, trains splat you.
   - **grass** — safe; some cells hold trees / boulders that block your hop
   - **road** — Bacon cars (orange / blue / green) in both directions; contact = death
   - **river** — you drown unless you land on a log; logs carry you sideways
-  - **railroad** — infrequent, fast train; crossing lights blink ~2s before it arrives
+  - **train** — infrequent, fast train; crossing lights blink ~2s before it arrives
 - **Scrolling** — hop past the middle of the board and the whole world slides
   down so the chick stays in the bottom third.
 - **Game over** — traffic freezes for half a second, then a `GAME OVER` card
   shows the score. Restart with `Space` / `Enter` / `R` (or just hop again).
+
+## Edge markers
+
+Subtle accent lines mark the playable column edges (the drown boundary
+where logs carry you off). They align with `drownColMin` / `drownColMax`
+so you can see the death zone before you cross it.
 
 ## Controls
 
@@ -32,7 +38,7 @@ drowns you, trains splat you.
 - Defaults (Crossy-like dimetric, not true isometric): **ANGLE 40°**, **ROT −26°** (user-matched). Fine-tune still live via hotkeys.
 - `[` / `]`: nudge road **angle** (steepness) ±0.5° — HUD `ANGLE`
 - `;` / `'`: nudge whole-scene **rotation** ±1° — HUD `ROT`
-- `-` / `=`: shrink / grow the game window
+- `-` / `=`: grow / shrink the game window (default 1.05, max 1.20)
 
 ## Crash debug log
 
@@ -41,6 +47,19 @@ appends a line to `~/.local/state/crossy-hop/hop-debug.log` (or `$XDG_STATE_HOME
 Also printed as `console.warn` in the shell log. Paste the last ~20 lines if it dies again. (desktop stays visible around it)
 - `M`: mute toggle (reserved; no SFX yet)
 - `Esc`: close
+
+## Resume / Save
+
+Game state saves automatically on close (mid-run) and persists `BEST` always.
+On reopen, a mid-run save is restored instead of resetting. After game over,
+the mid-run save is cleared but `BEST` carries over. Saves live at
+`~/.local/state/crossy-hop/save.json`.
+
+## Edge markers
+
+Subtle accent lines mark the playable column edges (the drown boundary
+where logs carry you off). They align with `drownColMin` / `drownColMax`
+so you can see the death zone before you cross it.
 
 ## Install
 
@@ -65,9 +84,9 @@ After QML edits: `omarchy restart shell`.
 - `CrossyHop.qml` — the whole game: iso projection (ANGLE/ROT baked in and
   centre-fitted into the upright play card), lane generation, a 16 ms `Timer`
   driving `step(dt)`, Canvas lane painting (grass diamonds, road bands with
-  dashed centre lines, water, rails + sleepers + crossing lights) and QML
-  `Repeater`s for sprites (Bacon cars / trains) and Canvas props (trees,
-  boulders) and logs.
+  dashed centre lines, water, rails + sleepers + crossing lights) and Canvas-only
+  traffic (cars + trains + logs). Auto-saves mid-run to `save.json`; resumes
+  on reopen. Edge markers show the drown boundary.
 - World coordinates: absolute row `ar` grows as you advance;
   `screenRow(ar) = rows - (ar - winAnchor)`. `winAnchor` is a real number so a
   forward hop can animate the world scroll.
@@ -109,9 +128,8 @@ blender --background --python tools/bake_blender.py -- --size 512 --out-height 9
 
 - Sound effects (the `M` mute toggle is wired but silent), maybe a hop blip and
   a squish.
-- Eagle / edge-of-world pressure when you dawdle (Crossy's anti-camping rule).
 - Chicken skins + coin pickups.
-- Persist `BEST` across sessions.
+- Persist `BEST` across sessions (saves now persist per-session best).
 - Baked MagicaVoxel tree / log sprites instead of Canvas primitives (trains done).
 
 ## License
