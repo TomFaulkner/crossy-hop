@@ -88,11 +88,7 @@ so you can see the death zone before you cross it.
 ## Install
 
 ```sh
-git clone https://github.com/TomFaulkner/crossy-hop.git
-cd crossy-hop
-ln -sfn "$PWD" ~/.config/omarchy/plugins/io.github.tomfaulkner.crossy-hop
-omarchy plugin validate ~/.config/omarchy/plugins/io.github.tomfaulkner.crossy-hop
-omarchy plugin enable io.github.tomfaulkner.crossy-hop --section right
+omarchy plugin add https://github.com/TomFaulkner/crossy-hop.git --enable
 ```
 
 Then click the chick in the bar, or:
@@ -101,7 +97,15 @@ Then click the chick in the bar, or:
 omarchy-shell shell toggle io.github.tomfaulkner.crossy-hop
 ```
 
-After QML edits: `omarchy restart shell`.
+After QML edits: `omarchy restart shell`. Do not run `omarchy-refresh-shell`; that resets `shell.json`.
+
+## Remove
+
+```sh
+omarchy plugin disable io.github.tomfaulkner.crossy-hop
+omarchy plugin remove io.github.tomfaulkner.crossy-hop --yes
+rm -rf "${XDG_STATE_HOME:-$HOME/.local/state}/crossy-hop"
+```
 
 ## How it works
 
