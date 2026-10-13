@@ -41,10 +41,7 @@ so you can see the death zone before you cross it.
 - `Space` / `Enter` / `R`: restart after a game over
 - `Esc`: close — always, whatever the game is doing (never blocked by a save)
 - Click **outside** the game card: close. Click the card: give it keyboard focus.
-- Defaults (Crossy-like dimetric, not true isometric): **ANGLE 40°**, **ROT −26°** (user-matched). Fine-tune still live via hotkeys.
-- `[` / `]`: nudge road **angle** (steepness) ±0.5° — HUD `ANGLE`
-- `;` / `'`: nudge whole-scene **rotation** ±1° — HUD `ROT`
-- `-` / `=`: grow / shrink the game window (default 1.05, max 1.20)
+- View: Crossy-like dimetric (not true isometric), road angle 40° and scene rotation −26°.
 
 The overlay asks for keyboard focus **on demand** (`WlrKeyboardFocus.OnDemand`),
 not exclusively: Omarchy's own shortcuts keep working while the game is open,
