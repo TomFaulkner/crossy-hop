@@ -43,7 +43,6 @@ Item {
   readonly property int playH: 480
 
   // View chrome: scale = window size; ROT is baked into isoX/isoY (card stays full + upright).
-  // [ ] angle (road steepness)   ; ' rotation   - = size
   property real viewScale: 1.05
   property real viewRotationDeg: -26
   property int winW: Math.round(playW * viewScale + 32)
@@ -1052,12 +1051,6 @@ Item {
     if (event.key === Qt.Key_Escape) { dismiss(); return true }
     if (event.key === Qt.Key_P) { togglePause(); return true }
     if (event.key === Qt.Key_M) { toggleMute(); return true }
-    if (event.key === Qt.Key_BracketLeft) { nudgeAngle(-0.5); return true }
-    if (event.key === Qt.Key_BracketRight) { nudgeAngle(0.5); return true }
-    if (event.key === Qt.Key_Semicolon) { nudgeRotation(-1); return true }
-    if (event.key === Qt.Key_Apostrophe) { nudgeRotation(1); return true }
-    if (event.key === Qt.Key_Minus || event.key === Qt.Key_Underscore) { nudgeView(-0.05); return true }
-    if (event.key === Qt.Key_Equal || event.key === Qt.Key_Plus) { nudgeView(0.05); return true }
     if (event.key === Qt.Key_Space || event.key === Qt.Key_Enter || event.key === Qt.Key_Return
         || event.key === Qt.Key_R) {
       if (gameOver && overClock > 0.4) { resetGame(); return true }
@@ -1566,20 +1559,6 @@ Item {
         spacing: 4
         z: 20
         Text {
-          text: "ANGLE  " + root.angleLabel()
-          color: accent
-          font.pixelSize: 20
-          font.bold: true
-          font.family: "monospace"
-        }
-        Text {
-          text: "ROT    " + root.rotationLabel()
-          color: accent
-          font.pixelSize: 20
-          font.bold: true
-          font.family: "monospace"
-        }
-        Text {
           visible: root.paused
           text: "PAUSED"
           color: hush
@@ -1588,7 +1567,7 @@ Item {
           font.family: "monospace"
         }
         Text {
-          text: "[ ] angle  ; ' rot  - = size  P pause  ESC close"
+          text: "P pause  ESC close"
           color: ink
           font.pixelSize: 12
           font.family: "monospace"
